@@ -36,9 +36,9 @@ Function MinorPlanet(Elements, Name, RightAscension, Declination, RightAscension
     
     Name = Trim(Left(Elements, 7))                          ' Object name (return)
     kt.Name = Name
-    'kt.Epoch = PackedToJulian(Trim(Mid(Elements, 21, 5)))   ' Epoch of osculating elements
+    kt.Epoch = PackedToJulian(Trim(Mid(Elements, 21, 5)))   ' Epoch of osculating elements
 	'msgBox PackedToJulian(Trim(Mid(Elements, 21, 5)))
-	kt.Epoch = 2458480.5
+	'kt.Epoch = 2458480.5
 	'kt.Epoch = 2458479.5
     cl = GetLocale()                                        ' Get locale (. vs , ****)
     SetLocale "en-us"                                       ' Make sure numbers convert properly
@@ -129,22 +129,23 @@ Function GetPositionAndVelocity(pl, st, TJD, RA, Dec, RADot, DecDot)
 	MsgBox RA & " " & Dec
     Set tvec1 = Nothing
     Set tvec2 = Nothing
-    Err.Raise vbObjectError, "ACP.AcquireSupport", _
-        "Ephemeris velocity calculation failed."
+    Err.Raise vbObjectError, "ACP.AcquireSupport", "Ephemeris velocity calculation failed."
 End Function
 
-Const PCODE = "123456789ABCDEFGHIJKLMNOPQRSTUV"
-Const YCODE = "IJK"
+
 
 Function PackedToJulian(Packed) 
-    Dim yr, mo, dy
-    
+    Dim yr, mo, dy, PCODE, YCODE
+    PCODE = "123456789ABCDEFGHIJKLMNOPQRSTUV"
+	YCODE = "IJK"
+	
     yr = (17 + InStr(YCODE, Left(Packed, 1))) * 100             ' Century
     yr = yr + CInt(Mid(Packed, 2, 2))                           ' Year in century   
     mo = InStr(PCODE, Mid(Packed, 4, 1))                        ' Month (1-12)
     dy = CDbl(InStr(PCODE, Mid(Packed, 5, 1)))                  ' Day (1-31)
-    PackedToJulian = DateToJulian(yr, mo, dy, dtj)                   ' UTC Julian Date
     
+	Call DateToJulian(yr, mo, dy, dtj)                   ' UTC Julian Date
+	PackedToJulian = dtj 	
 End Function
 
 ' DateToJulian() - Convert Gregorian calendar date to Julian
