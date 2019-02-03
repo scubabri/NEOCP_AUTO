@@ -3,184 +3,173 @@ Set objShell = CreateObject("WScript.Shell")
 Set Util = CreateObject("ASCOM.Utilities.Util")
 Set AstroUtils = CreateObject("ASCOM.Astrometry.NOVAS.NOVAS31")
 
-' set your working directory here
-baseDir = "E:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO"  
+baseDir = "E:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO"  										' set your working directory here
+
+Dim Elements, minscore, mindec, minvmag, minobs, minseen, imageScale, skySeeing, maxObjectMove, imageOverhead, binning, minHorizon
 
 ' set your minimums here
-minscore = 0
-mindec = 0 
-minvmag = 20	
-minobs = 4
-minseen = .8
+minscore = 0																			' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
+mindec = -10 																			' what is the minimum dec you can image at
+minvmag = 23																			' what is the dimmest object you can see
+minobs = 4																				' how many observations, fewer observations mean chance of being lost
+minseen = .2																			' what is the oldest object from the NEOCP, older objects have a good chance of being lost.
+imageScale = 1.29																		' your imageScale for determining exposure duration for moving objects
+skySeeing = 4																			' your skyseeing in arcsec, used for figuring out max exposure duration for moving objects.
+imageOverhead = 5 																		' how much time to download (and calibrate) added to exposure duration to calculate total number of exposures and repoint
+maxObjectMove = 10 																		' this is the maximum we would like the object to move before repoint.
+binning = 2 																			' binning
+minHorizon = 30																			' minimum altitude that ACP/Scheduler will start imaging
+getMPCORB = false																		' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
+getCOMETS = False
 
-strScriptFile = Wscript.ScriptFullName 													' D:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO\parse_neo.vbs
+strScriptFile = Wscript.ScriptFullName 													
 Set objFSO = CreateObject("Scripting.FileSystemObject")
 Set objFile = objFSO.GetFile(strScriptFile)
-strFolder = objFSO.GetParentFolderName(objFile) 										' D:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO
- 
+runDir = objFSO.GetParentFolderName(objFile) 
+objShell.CurrentDirectory = baseDir        												' E:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO
+
+cometsLink = "https://minorplanetcenter.net/iau/MPCORB/CometEls.txt"
 neocpLink = "https://minorplanetcenter.net/iau/NEO/neocp.txt" 							' minorplanetcenter URL, shouldnt need to change this
+
 neocpFile = baseDir+"\neocp.txt"														' where to put the downloaded neocp.txt, adjust as required.
-objectsSaveFile = baseDir+"\output.txt"													' where to put output of selected NEOCP objects for further parsing
+objectsSaveFile = baseDir+"\object_run.txt"												' where to put output of selected NEOCP objects reference
 
-orbLinkBase = "https://cgi.minorplanetcenter.net/cgi-bin/showobsorbs.cgi?Obj="			' base url to get NEOCPNomin orbit elements, shouldnt need to change this
-orbSaveFile = "\orbits.txt"
+mpcLinkBase = "https://cgi.minorplanetcenter.net/cgi-bin/showobsorbs.cgi?Obj="			' base url to get NEOCPNomin orbit elements, shouldnt need to change this
+mpcTmpFile = "\find_o64\mpc_fmt.txt"													' this is the output from find_orb in mpc 1-line element format
+obsTmpFile = "\find_o64\observations.txt"												' this is from observations from the NEOCP after parsing and filtering NEOCP.txt
 
-mpcorbSaveFile = baseDir+"\MPCORB.dat"													' the final (almost) MPCORB.dat 
- 																				
-objShell.CurrentDirectory = baseDir														' WGet saves file always on the actual folder. So, change the actual 
-																						'folder for C:\, where we want to save file
-Function Quotes(strQuotes)																' Add Quotes to string
-	Quotes = chr(34) & strQuotes & chr(34)												' http://stackoverflow.com/questions/2942554/vbscript-adding-quotes-to-a-string
-End Function
+mpcorbSaveFile = baseDir+"\MPCORB.dat"													' the raw MPCORB.dat from MPC that we'll append our elements to.
+fullMpcorbSave = "C:\Program Files (x86)\Common Files\ASCOM\MPCORB\MPCORB.dat"			' this is a copy for ACP should we decide to manually do an object run. 
+fullMpcorbLink = "https://minorplanetcenter.net/iau/MPCORB/MPCORB.DAT"	
+fullMpcorbDat = "\MPCORB.dat"
+fullCometDat = "\CometEls.txt"															' I cant remember why I have this one and I'm too tired to figure it out.																
  
-if objFSO.FileExists(mpcorbSaveFile) then												' get rid of stragglers 
-	objFSO.DeleteFile mpcorbSaveFile
-end if
-
-if objFSO.FileExists(objectsSaveFile) then
+if objFSO.FileExists(objectsSaveFile) then												' remove the old object_run.txt 
 	objFSO.DeleteFile objectsSaveFile
 end if
 
-objShell.Run Quotes(strFolder & "\wget.exe") & " " & Quotes(neocpLink) & " -N",0,True 	'download current neocp.txt from MPC 
- 
-Set neocpFileRead = objFSO.OpenTextFile(neocpFile, 1) 									' change path for input file from wget 
+if objFSO.FileExists(mpcorbSaveFile) then												' remove the old MPCORB.dat 
+	objFSO.DeleteFile mpcorbSaveFile
+end if
 
-Set objectsFileToWrite = CreateObject("Scripting.FileSystemObject").OpenTextFile(objectsSaveFile,8,true)  	' create output.txt
-Set MPCorbFileToWrite = CreateObject("Scripting.FileSystemObject").OpenTextFile(mpcorbSaveFile,8,true)  	' MPCORB.dat output
+if getCOMETS = true Then
+	objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(cometsLink) & " -O" & " " & Quotes(baseDir) & fullCometDat,0,True  	' get the full comets file for reference
+End If
+
+if getMPCORB = true Then
+	objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(fullMpcorbLink) & " -O" & " " & Quotes(baseDir) & fullMpcorbDat,0,True  	' get the full MPCORB.dat file for reference
+End If
+objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(neocpLink) & " -N",0,True 													'download current neocp.txt from MPC 
+
+Set neocpFileRead = objFSO.OpenTextFile(neocpFile, 1) 																				' change path for input file from wget 
+Set objectsFileToWrite = CreateObject("Scripting.FileSystemObject").CreateTextFile(objectsSaveFile,8,true)  						' create object_run.txt
+
+if objFSO.FileExists(mpcorbSaveFile) then												
+	Set MPCorbFileToWrite = CreateObject("Scripting.FileSystemObject").OpenTextFile(mpcorbSaveFile,8,true)  						' MPCORB.dat output to append NEOCP elements
+else
+	Set MPCorbFileToWrite = CreateObject("Scripting.FileSystemObject").CreateTextFile(mpcorbSaveFile,8,true)  						' MPCORB.dat didnt exist for some reason, lets create and empty one
+End If
 		
 Do Until neocpFileRead.AtEndOfStream
     strLine = neocpFileRead.ReadLine													' its probably a good idea NOT to touch the positions as they are fixed position.
 	object = Mid(strLine, 1,7)															' temporary object designation
 	score = Mid(strLine, 9,3)															' neocp desirablility score from 0 to 100, 100 being most desirable.
-	ra	  = Mid(strLine, 27,7)
+	ra	  = Mid(strLine, 27,7)															' right ascension 
 	dec = Mid(strLine, 35,6)															' declination 
-	vmag = Mid(strLine, 44,4)															' if you dont know what this is, change hobbies
+	vmag = Mid(strLine, 44,4)															' vMag 
 	obs = Mid(strLine, 79,4)															' how many observations has it had
 	seen = Mid(strLine, 96,7)															' when was the object last seen
 	
-    if (CSng(score) >= minscore) AND (CSng(dec) >= mindec) AND (CSng(vmag) <= minvmag) AND (CSng(obs) >= minobs) AND (CSng(seen) <= minseen) Then
+	if (CSng(score) >= minscore) AND (CSng(dec) >= mindec) AND (CSng(vmag) <= minvmag) AND (CSng(obs) >= minobs) AND (CSng(seen) <= minseen) Then
 	
-	Wscript.Echo object & "     " & score & "  " + ra & "  " & dec & "    " & vmag & "      " & obs & "     " & seen
+		Wscript.Echo object & "     " & score & "  " + ra & "  " & dec & "    " & vmag & "      " & obs & "     " & seen
 		
-		objShell.Run Quotes(strFolder & "\wget.exe") & " " & Quotes(orbLinkBase) & object & "&orb=y -O" & " " & Quotes(baseDir) & orbSaveFile,0,True ' run wget to get orbits from NEOCP
+		objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(mpcLinkBase) & object & "&obs=y -O" & " " & Quotes(baseDir) & obsTmpFile,0,True ' run wget to get observations from NEOCP
+		objShell.CurrentDirectory = "E:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO\find_o64"		' lets change our cwd to run find_orb, it likes it's home
+		objShell.Run "find_o64.exe observations.txt",0,False
+		Wscript.Sleep 5000																' find_orb needs a little bit to run, we'll give it 5 seconds.
+		objShell.CurrentDirectory = baseDir												' change directory back to where we are running script
+		objShell.Run "taskkill /im find_o64.exe"										' kill find_o64 when we are done until we get fo.exe for batch.
 		
-		Set objRegEx = CreateObject("VBScript.RegExp")									' This section parses the orbits from the neocp object and gets the NEOCPNomin parameters
-		objRegEx.Pattern = "NEOCPNomin"													' which is used in the MPCORB.dat 
-        Set objFile = objFSO.OpenTextFile(baseDir+orbSaveFile, 1)
+        Set objFile = objFSO.OpenTextFile(baseDir+mpcTmpFile, 1)						' open the mpc_fmt.txt that find_orb created and append it to the MPCORB.dat
+		
 		Do Until objFile.AtEndOfStream
-			strSearchString = objFile.ReadLine
-			Set colMatches = objRegEx.Execute(strSearchString)
-			
-			If colMatches.Count > 0 Then
-					MPCorbFileToWrite.WriteLine(strSearchString+"           "+object)	'write elemets to MPCORB.dat
-				Exit Do
-			End If
+			Elements = objFile.ReadLine
+			MPCorbFileToWrite.WriteLine(Elements)										'write elemets to MPCORB.dat
 		Loop
-
 		objFile.Close
-		objectsFileToWrite.WriteLine(object+ "     " + score + "  " + ra + "  " + dec + "    " + vmag + "      " + obs + "     " + seen)	
-	End If	
-Loop
-
-Set neocpFileRead = objFSO.OpenTextFile(neocpFile, 1) 
-
-Do Until neocpFileRead.AtEndOfStream
-    strLine = neocpFileRead.ReadLine													' its probably a good idea NOT to touch the positions as they are fixed position.
-	object = Mid(strLine, 1,7)															' temporary object designation
-	score = Mid(strLine, 9,3)															' neocp desirablility score from 0 to 100, 100 being most desirable.
-	ra	  = Mid(strLine, 27,7)
-	dec = Mid(strLine, 35,6)															' declination 
-	vmag = Mid(strLine, 44,4)															' if you dont know what this is, change hobbies
-	obs = Mid(strLine, 79,4)															' how many observations has it had
-	seen = Mid(strLine, 96,7)															' when was the object last seen	
-	
-    if (CSng(score) >= minscore) AND (CSng(dec) >= mindec) AND (CSng(vmag) <= minvmag) AND (CSng(obs) >= minobs) AND (CSng(seen) <= minseen) Then	
-	   
-	   objShell.Run Quotes(strFolder & "\wget.exe") & " " & Quotes(orbLinkBase) & object & "&orb=y -O" & " " & Quotes(baseDir) & orbSaveFile,0,True ' run wget to get orbits from NEOCP
 		
-		Set objRegEx = CreateObject("VBScript.RegExp")									' This section parses the orbits from the neocp object and gets the NEOCPNomin parameters
-		objRegEx.Pattern = "NEOCPNomin"													' which is used in the MPCORB.dat 
-        Set objFile = objFSO.OpenTextFile(baseDir+orbSaveFile, 1)
-		Do Until objFile.AtEndOfStream
-			strSearchString = objFile.ReadLine
-			Set colMatches = objRegEx.Execute(strSearchString)
+		objectsFileToWrite.WriteLine(object+ "     " + score + "  " + ra + "  " + dec + "    " + vmag + "      " + obs + "     " + seen)	' write out the objects_run for reference
 			
-			If colMatches.Count > 0 Then
-					mpcLine = strSearchString+"           "+object	'set MPCorb ephemeris for import to ACP
-					Elements = strSearchString
-				Exit Do
-			End If
-		Loop
-	
 		Name = object
 		call GetExposureData(expTime,imageCount, objectRate)
-		Call MinorPlanet(Elements, Name, RightAscension, Declination, RightAscensionRate, DeclinationRate)
-		objectRateSCR = Round(sqr((RightAscensionRate*RightAscensionRate) + (DeclinationRate*DeclinationRate))*60,6)
 		
-		If imageCount > 0 Then											' to overcome issues when object has been moved to PCCP
+		If imageCount > 0 Then															' to overcome issues when object has been moved to PCCP
 		
-			Dim RTML, REQ, TGT, PIC, COR, FSO, FIL, TR                    ' (for PrimalScript IntelliSense)
+			Dim RTML, REQ, TGT, PIC, COR, FSO, FIL, TR                 
 
 			Set RTML = CreateObject("DC3.RTML23.RTML")
 			Set RTML.Contact = CreateObject("DC3.RTML23.Contact")
-			RTML.Contact.User = "Brian Sheets"
+			RTML.Contact.User = "neocp"
 			RTML.Contact.Email = "brians@fl240.com"
 
 			Set REQ =  CreateObject("DC3.RTML23.Request")
-			REQ.UserName = "brians"                                  
-			REQ.Project = "NEOCP"                                    ' Proj for above user will be created if needed
+			REQ.UserName = "neocp"                                  
+			REQ.Project = "NEOCP"                                    					' Proj for above user will be created if needed
 
 			Set REQ.Schedule = CreateObject("DC3.RTML23.Schedule")
-			REQ.Schedule.Horizon = 30
+			REQ.Schedule.Horizon = minHorizon
+			REQ.Schedule.Priority = score
 			Set REQ.Schedule.Moon = CreateObject("DC3.RTML23.Moon")
 			Set REQ.Schedule.Moon.Lorentzian = CreateObject("DC3.RTML23.Lorentzian")
 			REQ.Schedule.Moon.Lorentzian.Distance  = 15
 			REQ.Schedule.Moon.Lorentzian.Width = 6
-			Set TR = CreateObject("DC3.RTML23.TimeRange")
 			
-			'TR.Earliest = Cdate("13:45:00")
-			
-			'REQ.Schedule = TR
 			Set REQ.Correction = CreateObject("DC3.RTML23.Correction")
 			REQ.Correction.zero = False
 			REQ.Correction.flat = False
 			REQ.Correction.dark = False
 		
 			RTML.RequestsC.Add REQ
-			REQ.ID = object                                         ' This becomes the Plan name for the Request
-			REQ.Description = object + " Score: " + score + " RA: " + ra + " DEC: " + dec + " vMag: " + vmag + " #Obs: " + obs + " Last Seen: " + seen  + " Rate: " + CStr(objectRate) + " SCRRate: " + Cstr(Round(objectRateSCR,2)) + " arcsec/min"
+			REQ.ID = object                                         					' This becomes the Plan name for the Request
+			REQ.Description = object + " Score: " + score + " RA: " + ra + " DEC: " + dec + " vMag: " + vmag + " #Obs: " + obs + " Last Seen: " + seen  + " Rate: " + CStr(objectRate) + " arcsec/min"
 			Set TGT = CreateObject("DC3.RTML23.Target")
-			TGT.TargetType.OrbitalElements = mpcLine
-			TGT.Description = mpcLine
+			TGT.TargetType.OrbitalElements = Elements
+			TGT.Description = Elements
 			TGT.Name = object
-			TGT.count = 2
-			TGT.Interval= 2  ' HOURS!!!
-			'TGT.Timefromprev = 0.5 ' hours
-			'TGT.Tolfromprev = 0 
+			
+			imageTotalTime = (((expTime + imageOverhead) * imageCount)/60)	' in minutes including overhead for download, etc
+			totalMove = ((objectRate * imageTotalTime)/60)    				' in arcmin		
+			
+			baseTargetCount = round(maxObjectMove / (imageTotalTime / totalMove),0) 
+			if baseTargetCount < 1 Then
+				TGT.count = 1
+			Else 
+				TGT.count = baseTargetCount '+ 10000
+			End If
+			
+			TGT.Interval = 0
 			REQ.TargetsC.Add TGT
 		
-			' An RTML Picture (child of Target) You may set the count property to acquire
-			' multiple images within this Picture, and you may set the autostack property
-			' to True to cause the repeated images to be automatically aligned and stacked.
-			'
 			Set PIC = CreateObject("DC3.RTML23.Picture")
-			PIC.Name = object+" Clear"                               ' Required
+			PIC.Name = object+" Luminance"                               	' Required
 			PIC.ExposureSpec.ExposureTime = expTime
-			PIC.Binning = 2
-			PIC.Filter = "Clear"
-			PIC.Count = imageCount
-
-			' Now add this Picture to the Target. You can repeat the above,
-			' creating additional Pictures, and add them to the Target.
-			' NOTE USE OF COM ACCESSOR.
-
+			PIC.Binning = binning
+			PIC.Filter = "Luminance"
+			
+			if baseTargetCount < 1 Then 
+				PIC.Count = imageCount
+			Else 
+				PIC.Count = round(imageCount / baseTargetCount,0)
+			End If
+			
 			TGT.PicturesC.Add PIC
 		
 			XML = RTML.XML(True)
 		
 			Set FSO = CreateObject("Scripting.FileSystemObject")
-			Set FIL = FSO.CreateTextFile("E:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO\NEOCP.rtml", True)    ' **CHANGE FOR YOUR SYSTEM**
-			FIL.Write XML                                           ' Has embedded line endings
+			Set FIL = FSO.CreateTextFile(baseDir+"\NEOCP.rtml", True)    		' **CHANGE FOR YOUR SYSTEM**
+			FIL.Write XML                                           			' Has embedded line endings
 			FIL.Close
 		
 			Dim I, DB, R
@@ -188,32 +177,47 @@ Do Until neocpFileRead.AtEndOfStream
 			Call DB.Connect()
 			Set I = CreateObject("DC3.RTML23.Importer")
 			Set I.DB = DB
-			I.Import "E:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO\NEOCP.rtml"
+			
+			I.Import baseDir+"\NEOCP.rtml"
 			Set R = I.Projects.Item(0)
+			
 			R.Disabled = false
 			R.Update()
-            I.Plans.Item(0).Resubmit()
+			Set NewPlan = I.Plans.Item(0)
+            NewPlan.Resubmit()
+            		
 			Call DB.Disconnect()
 			Set REQ =  nothing
 			Set RTML = nothing
 			Set TGT = nothing
-			set PIC = nothing
+			set PIC = Nothing
 		End If
-	End If	
+	End If
 Loop
 
-objFile.Close
-Set objTheSky = CreateObject("TheSkyX.sky6RASCOMTheSky") 
-call objTheSky.Quit()
-Set objTheSky = nothing	
-
-neocpFileRead.Close																		' close any open files
+neocpFileRead.Close																			' close any open files
 objectsFileToWrite.Close
 MPCorbFileToWrite.Close
 
-if objFSO.FileExists(baseDir+orbSaveFile) then											' clean up temporary files
-	objFSO.DeleteFile basedir+orbSaveFile
+if getMPCORB = true Then
+	set mpccopy=CreateObject("Scripting.FileSystemObject")
+	mpccopy.CopyFile baseDir+fullMpcorbDat, fullMpcorbSave, True
+
+	objShell.CurrentDirectory = "C:\Program Files (x86)\Common Files\ASCOM\MPCORB"
+	objShell.Run "MakeDB.wsf",0,True
+
+	set mpccopy = nothing
+	objShell.CurrentDirectory = baseDir
+End If
+
+if objFSO.FileExists(baseDir+mpcTmpFile) then												' clean up temporary files
+	objFSO.DeleteFile basedir+mpcTmpFile
 end if
+
+if objFSO.FileExists(baseDir+"\NEOCP.rtml") then											' clean up temporary files
+	objFSO.DeleteFile baseDir+"\NEOCP.rtml"
+end if
+
 if objFSO.FileExists(neocpFile) then
 	objFSO.DeleteFile neocpFile
 end if
@@ -223,37 +227,28 @@ end if
 Set objectsFileToWrite = Nothing
 
 Sub GetExposureData(expTime,imageCount, objectRate)
-	imageScale = 1.29
-	skySeeing = 4
-	call getObjectRate(object, objectRate)
+	
+	call MinorPlanet(Elements, Name, RightAscension, Declination, RightAscensionRate, DeclinationRate)
+	objectRate = Round(sqr((RightAscensionRate*RightAscensionRate) + (DeclinationRate*DeclinationRate))*60,2)
 	expTime = round((60*(imageScale/objectRate)*skySeeing),0)
 	
 	If (expTime >= 30) AND (expTime < 45) Then
-		expTime = 30 
-	ElseIf	(expTime >= 45) AND (expTime < 60) Then 
 		expTime = 45 
-	ElseIf expTime >= 60 Then 
-		expTime = 60 
+	ElseIf	(expTime >= 45) AND (expTime < 60) Then 
+		expTime = 60
+	ElseIf expTime >= 60 AND (expTime < 75) Then 
+		expTime = 75 
+	ElseIf expTime >= 75 AND (expTime < 90) Then 
+		expTime = 90
+	ElseIf expTime >= 90 AND (expTime < 105) Then 
+		expTime = 105
+	ElseIf expTime >= 105 AND (expTime < 120) Then 
+		expTime = 120
+	ElseIf expTime >= 120  Then
+		expTime = 120
 	End If
-	
-	imageCount = round((30*(60/expTime)),0)
-End Sub
-
-Sub getObjectRate(object, objectRate)
-	Dim objTheSkyChart
-	Dim objTheSkyInfo
-	Set objTheSkyChart = CreateObject("TheSkyX.sky6StarChart") 
-	status = objTheSkyChart.Find ("MPL "+object)
-	Set objTheSkyInfo = CreateObject("TheSkyX.sky6ObjectInformation") 
-	objTheSkyInfo.Index = 0 
-	status = objTheSkyInfo.Property (77)
-	objectRateRA = Cdbl(objTheSkyInfo.ObjInfoPropOut)
-	status = objTheSkyInfo.Property (78)
-	objectRateDEC = CDbl(objTheSkyInfo.ObjInfoPropOut)
-	objectRate	= round((sqr((objectRateRA*objectRateRA)+(objectRateDEC*objectRateDEC)))*60,2)
-
-	Set objTheSkyChart = Nothing
-	Set objTheSkyInfo = Nothing
+	Minutes = 30 												' set to how long you want to capture images
+	imageCount = round((Minutes*(60/expTime)),0)
 End Sub
 	
 Function MinorPlanet(Elements, Name, RightAscension, Declination, RightAscensionRate, DeclinationRate)
@@ -273,23 +268,23 @@ Function MinorPlanet(Elements, Name, RightAscension, Declination, RightAscension
     pl.Type = 1                                                 ' NOVAS: Minor Planet (Passed to Kepler)
     pl.Number = 1                                               ' Must pass valid number to Kepler, but is ignored
     
-    Name = Trim(Left(Elements, 7))                          ' Object name (return)
+    Name = Trim(Left(Elements, 7))                          	' Object name (return)
     kt.Name = Name
-    kt.Epoch = PackedToJulian(Trim(Mid(Elements, 21, 5))) + 1 ' Epoch of osculating elements
-    cl = GetLocale()                                        ' Get locale (. vs , ****)
-    SetLocale "en-us"                                       ' Make sure numbers convert properly
-    kt.M = CDbl(Trim(Mid(Elements, 27, 9)))                 ' Mean anomaly
-	kt.n = CDbl(Trim(Mid(Elements, 81, 11)))                ' Mean daily motion (deg/day)
-	kt.a = CDbl(Trim(Mid(Elements, 93, 11)))                ' Semimajor axis (AU)
-	kt.e = CDbl(Trim(Mid(Elements, 71, 9)))                 ' Orbital eccentricity
-	kt.Peri = CDbl(Trim(Mid(Elements, 38, 9)))              ' Arg of perihelion (J2000, deg.)
-	kt.Node = CDbl(Trim(Mid(Elements, 49, 9)))              ' Long. of asc. node (J2000, deg.)
-    kt.Incl = CDbl(Trim(Mid(Elements, 60, 9)))              ' Inclination (J2000, deg.)
-	SetLocale cl                                            ' Restore locale
+    kt.Epoch = PackedToJulian(Trim(Mid(Elements, 21, 5))) + 1 	' Epoch of osculating elements
+    cl = GetLocale()                                        	' Get locale (. vs , ****)
+    SetLocale "en-us"                                       	' Make sure numbers convert properly
+    kt.M = CDbl(Trim(Mid(Elements, 27, 9)))                 	' Mean anomaly
+	kt.n = CDbl(Trim(Mid(Elements, 81, 11)))                	' Mean daily motion (deg/day)
+	kt.a = CDbl(Trim(Mid(Elements, 93, 11)))                	' Semimajor axis (AU)
+	kt.e = CDbl(Trim(Mid(Elements, 71, 9)))                 	' Orbital eccentricity
+	kt.Peri = CDbl(Trim(Mid(Elements, 38, 9)))              	' Arg of perihelion (J2000, deg.)
+	kt.Node = CDbl(Trim(Mid(Elements, 49, 9)))              	' Long. of asc. node (J2000, deg.)
+    kt.Incl = CDbl(Trim(Mid(Elements, 60, 9)))             	 	' Inclination (J2000, deg.)
+	SetLocale cl                                            	' Restore locale
 	
-    jd = Util.JulianDate                                     ' Get current jd
+    jd = Util.JulianDate                                     	' Get current jd
 	
-    pl.DeltaT = AstroUtils.DeltaT(jd)                                 ' Delta T for NOVAS and Kepler
+    pl.DeltaT = AstroUtils.DeltaT(jd)                            ' Delta T for NOVAS and Kepler
     
 	Call GetPositionAndVelocity(pl, Site,  jd - (pl.DeltaT / 86400), RightAscension, Declination, RightAscensionRate, DeclinationRate)	
 	
@@ -335,7 +330,6 @@ Function GetPositionAndVelocity(pl, st, TJD, RA, Dec, RADot, DecDot)
 		Call EquDist(tvec1.RightAscension, tvec1.Declination, tvec2.RightAscension, tvec2.Declination, eqdist)
 		
 		If eqdist > 0.0083334 Then
-		     
             ' Moves "enough", calculate coordinate rates
             x = tvec2.RightAscension - tvec1.RightAscension
 			
@@ -369,7 +363,7 @@ Function GetPositionAndVelocity(pl, st, TJD, RA, Dec, RADot, DecDot)
     Set tvec2 = Nothing
 End Function
 
-Function PackedToJulian(Packed) 
+Function PackedToJulian(Packed) 								' https://minorplanetcenter.net/iau/info/PackedDates.html
     Dim yr, mo, dy, PCODE, YCODE
     PCODE = "123456789ABCDEFGHIJKLMNOPQRSTUV"
 	YCODE = "IJK"
@@ -379,7 +373,7 @@ Function PackedToJulian(Packed)
     mo = InStr(PCODE, Mid(Packed, 4, 1))                        ' Month (1-12)
     dy = CDbl(InStr(PCODE, Mid(Packed, 5, 1)))                  ' Day (1-31)
     
-	Call DateToJulian(yr, mo, dy, dtj)                   ' UTC Julian Date
+	Call DateToJulian(yr, mo, dy, dtj)                  		' UTC Julian Date
 	PackedToJulian = dtj 		
 End Function
 
@@ -448,4 +442,8 @@ End Function
 
 Function ArcCos(X)
     ArcCos = Atn(-X / Sqr(-X * X + 1)) + 2 * Atn(1)
+End Function
+
+Function Quotes(strQuotes)																' Add Quotes to string
+	Quotes = chr(34) & strQuotes & chr(34)												' http://stackoverflow.com/questions/2942554/vbscript-adding-quotes-to-a-string
 End Function
