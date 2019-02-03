@@ -10,15 +10,16 @@ Dim Elements, minscore, mindec, minvmag, minobs, minseen, imageScale, skySeeing,
 ' set your minimums here
 minscore = 0																			' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
 mindec = -10 																			' what is the minimum dec you can image at
-minvmag = 23																			' what is the dimmest object you can see
-minobs = 4																				' how many observations, fewer observations mean chance of being lost
-minseen = .2																			' what is the oldest object from the NEOCP, older objects have a good chance of being lost.
+minvmag = 25																			' what is the dimmest object you can see
+minobs = 3																				' how many observations, fewer observations mean chance of being lost
+minseen = 20																			' what is the oldest object from the NEOCP, older objects have a good chance of being lost.
 imageScale = 1.29																		' your imageScale for determining exposure duration for moving objects
 skySeeing = 4																			' your skyseeing in arcsec, used for figuring out max exposure duration for moving objects.
 imageOverhead = 5 																		' how much time to download (and calibrate) added to exposure duration to calculate total number of exposures and repoint
 maxObjectMove = 10 																		' this is the maximum we would like the object to move before repoint.
 binning = 2 																			' binning
 minHorizon = 30																			' minimum altitude that ACP/Scheduler will start imaging
+uncertainty = 10000																		' maximum uncertainty in arcmin from scout for attempt 
 getMPCORB = false																		' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
 getCOMETS = False
 
@@ -30,9 +31,12 @@ objShell.CurrentDirectory = baseDir        												' E:\Dropbox\ASTRO\SCRIPT
 
 cometsLink = "https://minorplanetcenter.net/iau/MPCORB/CometEls.txt"
 neocpLink = "https://minorplanetcenter.net/iau/NEO/neocp.txt" 							' minorplanetcenter URL, shouldnt need to change this
+scoutLink = "https://ssd-api.jpl.nasa.gov/scout.api?tdes="
+
 
 neocpFile = baseDir+"\neocp.txt"														' where to put the downloaded neocp.txt, adjust as required.
 objectsSaveFile = baseDir+"\object_run.txt"												' where to put output of selected NEOCP objects reference
+scoutSaveFile = "\scout.json"
 
 mpcLinkBase = "https://cgi.minorplanetcenter.net/cgi-bin/showobsorbs.cgi?Obj="			' base url to get NEOCPNomin orbit elements, shouldnt need to change this
 mpcTmpFile = "\find_o64\mpc_fmt.txt"													' this is the output from find_orb in mpc 1-line element format
@@ -42,7 +46,11 @@ mpcorbSaveFile = baseDir+"\MPCORB.dat"													' the raw MPCORB.dat from MPC
 fullMpcorbSave = "C:\Program Files (x86)\Common Files\ASCOM\MPCORB\MPCORB.dat"			' this is a copy for ACP should we decide to manually do an object run. 
 fullMpcorbLink = "https://minorplanetcenter.net/iau/MPCORB/MPCORB.DAT"	
 fullMpcorbDat = "\MPCORB.dat"
-fullCometDat = "\CometEls.txt"															' I cant remember why I have this one and I'm too tired to figure it out.																
+fullCometDat = "\CometEls.txt"															' I cant remember why I have this one and I'm too tired to figure it out.	
+
+Include "VbsJson"	
+Dim json, neocpStr, jsonDecoded
+Set json = New VbsJson																															
  
 if objFSO.FileExists(objectsSaveFile) then												' remove the old object_run.txt 
 	objFSO.DeleteFile objectsSaveFile
@@ -69,7 +77,7 @@ if objFSO.FileExists(mpcorbSaveFile) then
 else
 	Set MPCorbFileToWrite = CreateObject("Scripting.FileSystemObject").CreateTextFile(mpcorbSaveFile,8,true)  						' MPCORB.dat didnt exist for some reason, lets create and empty one
 End If
-		
+
 Do Until neocpFileRead.AtEndOfStream
     strLine = neocpFileRead.ReadLine													' its probably a good idea NOT to touch the positions as they are fixed position.
 	object = Mid(strLine, 1,7)															' temporary object designation
@@ -80,10 +88,22 @@ Do Until neocpFileRead.AtEndOfStream
 	obs = Mid(strLine, 79,4)															' how many observations has it had
 	seen = Mid(strLine, 96,7)															' when was the object last seen
 	
-	if (CSng(score) >= minscore) AND (CSng(dec) >= mindec) AND (CSng(vmag) <= minvmag) AND (CSng(obs) >= minobs) AND (CSng(seen) <= minseen) Then
+	objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(scoutLink) & object & " -O" & " " & Quotes(baseDir) & scoutSaveFile,0,True ' Get NEOCP from Scout
+	scoutStr = objFSO.OpenTextFile(baseDir+scoutSaveFile).ReadAll
+	Set jsonDecoded = json.Decode(scoutStr)
+	   
+	'scoutobject  = jsonDecoded("objectName")										' temporary object designation
+	'scoutscore   = jsonDecoded("neoScore")					    					' neocp desirablility score from 0 to 100, 100 being most desirable.
+	'scoutdec     = jsonDecoded("dec")												' declination 
+	'scoutra      = jsonDecoded("ra")												' right ascension 
+	'scoutvmag    = jsonDecoded("Vmag")												' if you dont know what this is, change hobbies
+	'scoutobs     = jsonDecoded("nObs")												' how many observations has it had
+	'scoutrate    = jsonDecoded("rate")												' total motion in "/min
+	scoutUnc    = jsonDecoded("unc")												' position uncertainty in arcmin
+	'Wscript.Echo scoutobject & " " & scoutUnc
 	
-		Wscript.Echo object & "     " & score & "  " + ra & "  " & dec & "    " & vmag & "      " & obs & "     " & seen
-		
+	if (CSng(score) >= minscore) AND (CSng(dec) >= mindec) AND (CSng(vmag) <= minvmag) AND (CSng(obs) >= minobs) AND (CSng(seen) <= minseen) AND ((CSng(scoutUnc) <= uncertainty) AND (scoutUnc <> "")) Then
+	
 		objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(mpcLinkBase) & object & "&obs=y -O" & " " & Quotes(baseDir) & obsTmpFile,0,True ' run wget to get observations from NEOCP
 		objShell.CurrentDirectory = "E:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO\find_o64"		' lets change our cwd to run find_orb, it likes it's home
 		objShell.Run "find_o64.exe observations.txt",0,False
@@ -99,8 +119,9 @@ Do Until neocpFileRead.AtEndOfStream
 		Loop
 		objFile.Close
 		
-		objectsFileToWrite.WriteLine(object+ "     " + score + "  " + ra + "  " + dec + "    " + vmag + "      " + obs + "     " + seen)	' write out the objects_run for reference
-			
+		Wscript.Echo object & "     " & score & "  " + ra & "  " & dec & "    " & vmag & "      " & obs & "     " & seen & "   " & scoutUnc
+		objectsFileToWrite.WriteLine(object+ "     " + score + "  " + ra + "  " + dec + "    " + vmag + "      " + obs + "     " + seen + " " + scoutUnc)	' write out the objects_run for reference
+		
 		Name = object
 		call GetExposureData(expTime,imageCount, objectRate)
 		
@@ -132,7 +153,7 @@ Do Until neocpFileRead.AtEndOfStream
 		
 			RTML.RequestsC.Add REQ
 			REQ.ID = object                                         					' This becomes the Plan name for the Request
-			REQ.Description = object + " Score: " + score + " RA: " + ra + " DEC: " + dec + " vMag: " + vmag + " #Obs: " + obs + " Last Seen: " + seen  + " Rate: " + CStr(objectRate) + " arcsec/min"
+			REQ.Description = object + " Score: " + score + " RA: " + ra + " DEC: " + dec + " vMag: " + vmag + " #Obs: " + obs + " Last Seen: " + seen  + " Rate: " + CStr(objectRate) + " arcsec/min" + " Unc (arcmin): " + scoutUnc
 			Set TGT = CreateObject("DC3.RTML23.Target")
 			TGT.TargetType.OrbitalElements = Elements
 			TGT.Description = Elements
@@ -225,6 +246,25 @@ if objFSO.FileExists(baseDir+scoutSaveFile) then
 	objFSO.DeleteFile baseDir+scoutSaveFile
 end if
 Set objectsFileToWrite = Nothing
+
+Sub Include(file)
+	On Error Resume Next
+	
+	Dim FSO
+	Set FSO = CreateObject("Scripting.FileSystemObject")
+	ExecuteGlobal FSO.OpenTextFile(file & ".vbs", 1).ReadAll()
+	Set FSO = Nothing
+
+	If Err.Number <> 0 Then
+		If Err.Number = 1041 Then
+			Err.Clear
+		Else
+			WScript.Quit 1
+		End If
+	End If
+End Sub
+
+	
 
 Sub GetExposureData(expTime,imageCount, objectRate)
 	
