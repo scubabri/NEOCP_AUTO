@@ -21,8 +21,8 @@ binning = 2 																			' binning
 minHorizon = 30																			' minimum altitude that ACP/Scheduler will start imaging
 maxuncertainty = 100																		' maximum uncertainty in arcmin from scout for attempt 
 getMPCORB = True																		' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
-getCOMETS = True
-getNEOCP = True
+getCOMETS = False
+getNEOCP = False
 getESAPri = True
 
 strScriptFile = Wscript.ScriptFullName 													
@@ -45,8 +45,8 @@ plistTmpFile = basedir+"\plist.txt"																' temporary plist file
 mpcTmpFile = "\find_o64\mpc_fmt.txt"													' this is the output from find_orb in mpc 1-line element format
 obsTmpFile = "\find_o64\observations.txt"												' this is from observations from the NEOCP after parsing and filtering NEOCP.txt
 
-mpcorbSaveFile = baseDir+"\MPCORB.dat"	
-												' the raw MPCORB.dat from MPC that we'll append our elements to.
+mpcorbSaveFile = baseDir+"\MPCORB.dat"													' the raw MPCORB.dat from MPC that we'll append our elements to.
+												
 fullMpcorbSave = "C:\Program Files (x86)\Common Files\ASCOM\MPCORB\MPCORB.dat"			' this is a copy for ACP should we decide to manually do an object run. 
 fullMpcorbLink = "https://minorplanetcenter.net/iau/MPCORB/MPCORB.DAT"	
 fullMpcorbDat = "\MPCORB.dat"
@@ -128,7 +128,7 @@ Function getESAObjects()
 	Do Until plistTmpFileRead.AtEndOfStream													' read the downloaded neocp.txt and parse for object parameters
 		strLine = plistTmpFileRead.ReadLine													' its probably a good idea NOT to touch the positions as they are fixed position.
 		esaPriority = Mid(strLine,1,1)
-		object = replace(Mid(strLine, 5,8),chr(34), chr(32))															' temporary object designation
+		object = replace(Mid(strLine, 5,10),chr(34), chr(32))															' temporary object designation
 		dec = Mid(strLine, 27,5)															' declination 
 		vmag = Mid(strLine, 37,4)															' vMag 
 		uncertainty = Mid(strLine, 42,5)
