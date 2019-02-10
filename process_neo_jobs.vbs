@@ -13,16 +13,16 @@ mindec = -10 																			' what is the minimum dec you can image at
 minvmag = 19.5																			' what is the dimmest object you can see
 minobs = 3																				' how many observations, fewer observations mean chance of being lost
 minseen = 10																				' what is the oldest object from the NEOCP, older objects have a good chance of being lost.
-imageScale = 1.29																		' your imageScale for determining exposure duration for moving objects
-skySeeing = 4																			' your skyseeing in arcsec, used for figuring out max exposure duration for moving objects.
+imageScale = 1.71																		' your imageScale for determining exposure duration for moving objects
+skySeeing = 3																			' your skyseeing in arcsec, used for figuring out max exposure duration for moving objects.
 imageOverhead = 5 																		' how much time to download (and calibrate) added to exposure duration to calculate total number of exposures and repoint
 maxObjectMove = 10 																		' this is the maximum we would like the object to move before repoint.
 binning = 2 																			' binning
 minHorizon = 30																			' minimum altitude that ACP/Scheduler will start imaging
 maxuncertainty = 100																		' maximum uncertainty in arcmin from scout for attempt 
-getMPCORB = True																		' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
+getMPCORB = False																		' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
 getCOMETS = False
-getNEOCP = False
+getNEOCP = True
 getESAPri = True
 
 strScriptFile = Wscript.ScriptFullName 													
@@ -54,7 +54,7 @@ fullMpcorbDat = "\MPCORB.dat"
 fullCometSave = "C:\Program Files (x86)\Common Files\ASCOM\MPCCOMET\CometEls.txt"		' this is a copy for ACP should we decide to manually do an object run. 
 cometsLink = "https://minorplanetcenter.net/iau/MPCORB/CometEls.txt"
 fullCometDat = "\CometEls.txt"															' I cant remember why I have this one and I'm too tired to figure it out.	
-
+		
 Include "VbsJson"	
 Dim json, neocpStr, jsonDecoded
 Set json = New VbsJson
@@ -67,16 +67,37 @@ if objFSO.FileExists(objectsSaveFile) then												' remove the old object_ru
 	objFSO.DeleteFile objectsSaveFile
 end if
 
+Set Sched = CreateObject("Acp.Util") 
+If Sched.Scheduler.Available = True Then
+	DispStatus = Sched.Scheduler.DispatcherStatus 
+	If DispStatus = 5 OR DispStatus = 99 Then
+		DispWasEnabled = False 
+		call deleteNEOProject()
+	Else 
+		DispWasEnabled = True
+	End If
+	If DispStatus = 0 Then
+		Sched.Scheduler.DispatcherEnabled = False
+		Wscript.Sleep 10000
+		call deleteNEOProject()
+	ElseIf DispStatus < 5 OR (DispStatus > 5 AND DispStatus < 99) Then
+		Wscript.Quit
+	End If
+	If DispWasEnabled Then
+		Sched.Scheduler.DispatcherEnabled = True
+	End If
+End If
+
 call downloadObjects()
 call updateACPObjects()	
-
-If getNEOCP = True Then
-	call getNEOCPObjects()
-End If 
 
 If getESAPri = True Then
 	call getESAObjects()
 End If
+
+If getNEOCP = True Then
+	call getNEOCPObjects()
+End If 
 
 if objFSO.FileExists(baseDir+mpcTmpFile) then												' clean up temporary files
 	objFSO.DeleteFile basedir+mpcTmpFile
@@ -94,6 +115,57 @@ if objFSO.FileExists(baseDir+scoutTmpFile) then
 end if
 Set objFSO = Nothing
 Set objectsFileToWrite = Nothing
+
+Function deleteNEOProject
+	Dim RTML, REQ, TGT, ImageSet, FSO, FIL            
+	Set RTML = CreateObject("DC3.RTML23.RTML")
+	Set RTML.Contact = CreateObject("DC3.RTML23.Contact")
+	RTML.Contact.User = "neocp"
+	RTML.Contact.Email = "brians@fl240.com"
+		
+	Set REQ =  CreateObject("DC3.RTML23.Request")
+	REQ.UserName = "neocp"                                  
+	REQ.Project = "NEOCP"                                    					' Proj for above user will be created if needed
+
+	Set REQ.Schedule = CreateObject("DC3.RTML23.Schedule")
+		
+	RTML.RequestsC.Add REQ
+	REQ.ID = "dummy"                                         					' This becomes the Plan name for the Request
+	REQ.Description = "dummy"
+	Set TGT = CreateObject("DC3.RTML23.Target")
+	TGT.Name = "dummy"	
+	TGT.count = 1	
+	REQ.TargetsC.Add TGT
+		
+	Set ImageSet = CreateObject("DC3.RTML23.Picture")
+	ImageSet.Name = "dummy"		
+	ImageSet.ExposureSpec.ExposureTime = 1
+	ImageSet.Count = 1
+	TGT.PicturesC.Add ImageSet
+		
+	XML = RTML.XML(True)
+		
+	Set FSO = CreateObject("Scripting.FileSystemObject")
+	Set FIL = FSO.CreateTextFile(baseDir+"\NEOCP.rtml", True)    		' **CHANGE FOR YOUR SYSTEM**
+	FIL.Write XML                                           			' Has embedded line endings
+	FIL.Close
+	
+	Dim I, DB, R
+	Set DB = CreateObject("DC3.Scheduler.Database")
+	Call DB.Connect()
+	Set I = CreateObject("DC3.RTML23.Importer")
+	Set I.DB = DB
+	I.Import baseDir+"\NEOCP.rtml"
+	Set R = I.Projects.Item(0)
+	DB.DeleteProject(R)
+	Call DB.Disconnect()
+	
+	Set RTML = Nothing
+	Set REQ = Nothing
+	Set DB = Nothing
+	Set FIL = Nothing
+	Set FSO = Nothing
+End Function
 																													
 Function downloadObjects()
 
@@ -136,7 +208,7 @@ Function getESAObjects()
 		If IsNumeric(esaPriority) Then
 			If (Csng(dec) >= mindec) AND (Csng(vmag) <= minvmag) AND (Csng(uncertainty) <= maxuncertainty) Then
 				wscript.echo object & " " & esaPriority & " " & dec & " " & vmag & " " & uncertainty
-				objectsFileToWrite.WriteLine object + " " + esaPriority + " " + dec & " " + vmag + " " + uncertainty
+				objectsFileToWrite.WriteLine(object)' + " " + esaPriority + " " + dec & " " + vmag + " " + uncertainty
 				objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(newtonLinkBase) & Replace(object," ","")  & ".rwo" & " -O" & " " & Quotes(baseDir) & obsTmpFile,0,True 
 				Set objFile = objFSO.OpenTextFile(baseDir+obsTmpFile, 1)
 				
@@ -162,7 +234,7 @@ End Function
 Function getNEOCPObjects()
 	
 	Set neocpTmpFileRead = objFSO.OpenTextFile(neocpTmpFile, 1) 														' change path for input file from wget 
-	Set objectsFileToWrite = CreateObject("Scripting.FileSystemObject").CreateTextFile(objectsSaveFile,8,true)  		' create object_run.txt
+	Set objectsFileToWrite = CreateObject("Scripting.FileSystemObject").OpenTextFile(objectsSaveFile,8,true)  		' create object_run.txt
 
 	if objFSO.FileExists(mpcorbSaveFile) then												
 		Set MPCorbFileToWrite = CreateObject("Scripting.FileSystemObject").OpenTextFile(mpcorbSaveFile,8,true)  		' MPCORB.dat output to append NEOCP elements
@@ -204,7 +276,7 @@ Function getNEOCPObjects()
 				objFile.Close
 		
 				Wscript.Echo object & "     " & score & "  " + ra & "  " & dec & "    " & vmag & "      " & obs & "     " & seen & "   " & uncertainty
-				objectsFileToWrite.WriteLine(object+ "     " + score + "  " + ra + "  " + dec + "    " + vmag + "      " + obs + "     " + seen + " " + uncertainty)	' write out the objects_run for reference
+				objectsFileToWrite.WriteLine(object)'+ "     " + score + "  " + ra + "  " + dec + "    " + vmag + "      " + obs + "     " + seen + " " + uncertainty)	' write out the objects_run for reference
 				Name = object
 				
 				call buildObjectDB(object)
@@ -214,7 +286,7 @@ Function getNEOCPObjects()
 	Loop
 	
 	neocpTmpFileRead.Close																			' close any open files
-	objectsFileToWrite.Close
+	'objectsFileToWrite.Close
 	MPCorbFileToWrite.Close
 End Function
 
@@ -239,7 +311,7 @@ Sub GetExposureData(expTime,imageCount, objectRate)
 	ElseIf expTime >= 120  Then
 		expTime = 120
 	End If
-	Minutes = 30 												' set to how long you want to capture images
+	Minutes = 10 												' set to how long you want to capture images
 	imageCount = round((Minutes*(60/expTime)),0)
 End Sub
 
@@ -250,7 +322,7 @@ Function buildObjectDB(object)
 	
 	If imageCount > 0 Then															' to overcome issues when object has been moved to PCCP
 	
-		Dim RTML, REQ, TGT, PIC, COR, FSO, FIL, TR                 
+		Dim RTML, REQ, TGT, ImageSet, COR, FSO, FIL, TR                 
 		Set RTML = CreateObject("DC3.RTML23.RTML")
 		Set RTML.Contact = CreateObject("DC3.RTML23.Contact")
 		RTML.Contact.User = "neocp"
@@ -276,6 +348,7 @@ Function buildObjectDB(object)
 		RTML.RequestsC.Add REQ
 		REQ.ID = object                                         					' This becomes the Plan name for the Request
 		REQ.Description = object + " Score: " + score + " RA: " + ra + " DEC: " + dec + " vMag: " + vmag + " #Obs: " + obs + " Last Seen: " + seen  + " Rate: " + CStr(objectRate) + " arcsec/min" + " Unc (arcmin): " + uncertainty
+		
 		Set TGT = CreateObject("DC3.RTML23.Target")
 		TGT.TargetType.OrbitalElements = Elements
 		TGT.Description = Elements
@@ -288,26 +361,35 @@ Function buildObjectDB(object)
 		if baseTargetCount < 1 Then
 			TGT.count = 1
 		Else 
-			TGT.count = baseTargetCount + 10000
+			TGT.count = baseTargetCount + 10000	
 		End If
-			
+
 		TGT.Interval = 0
 		REQ.TargetsC.Add TGT
 		
-		Set PIC = CreateObject("DC3.RTML23.Picture")
-		PIC.Name = object+" Luminance"                               	
-		PIC.ExposureSpec.ExposureTime = expTime
-		PIC.Binning = binning
-		PIC.Filter = "Luminance"
-		PIC.Description = "#nopreview"
+		if baseTargetCount < 1 Then
+			TGT.count = 1
+		Else 
+			TGT.count = baseTargetCount + 10000	
+		End If
+		TGT.Timefromprev = .5
+		
+		REQ.TargetsC.Add TGT
+		
+		Set ImageSet = CreateObject("DC3.RTML23.Picture")
+		ImageSet.Name = object+" Luminance"                               	
+		ImageSet.ExposureSpec.ExposureTime = expTime
+		ImageSet.Binning = binning
+		ImageSet.Filter = "Luminance"
+		ImageSet.Description = "#nopreview"
 			
 		if baseTargetCount < 1 Then 
-			PIC.Count = imageCount
+			ImageSet.Count = imageCount
 		Else 
-			PIC.Count = round(imageCount / baseTargetCount,0)
+			ImageSet.Count = round(imageCount / baseTargetCount,0)
 		End If
 			
-		TGT.PicturesC.Add PIC
+		TGT.PicturesC.Add ImageSet
 		
 		XML = RTML.XML(True)
 		
@@ -319,12 +401,13 @@ Function buildObjectDB(object)
 		Dim I, DB, R
 		Set DB = CreateObject("DC3.Scheduler.Database")
 		Call DB.Connect()
+
 		Set I = CreateObject("DC3.RTML23.Importer")
 		Set I.DB = DB
 			
 		I.Import baseDir+"\NEOCP.rtml"
 		Set R = I.Projects.Item(0)
-			
+		
 		R.Disabled = false
 		R.Update()
 		Set NewPlan = I.Plans.Item(0)
@@ -334,8 +417,10 @@ Function buildObjectDB(object)
 		Set REQ =  nothing
 		Set RTML = nothing
 		Set TGT = nothing
-		set PIC = Nothing
+		set ImageSet = Nothing
+		
 	End If
+	'Wscript.Quit
 End Function
 
 Function getMinorPlanetMotion(Elements, Name, RightAscension, Declination, RightAscensionRate, DeclinationRate)
