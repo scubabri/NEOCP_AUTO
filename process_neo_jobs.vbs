@@ -1,8 +1,5 @@
 Set objShell = CreateObject("WScript.Shell")
 
-Set Util = CreateObject("ASCOM.Utilities.Util")
-Set AstroUtils = CreateObject("ASCOM.Astrometry.NOVAS.NOVAS31")
-
 baseDir = "E:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO"  										' set your working directory here
 
 Dim Arg, runType, Elements, minscore, mindec, minvmag, minobs, minseen, imageScale, skySeeing, imageOverhead, binning, minHorizon, uncertainty, object, score, ra, dec, vmag, obs, seen, RightAscension, Declination, dJD, transitHM
@@ -12,7 +9,7 @@ runType = Arg(0)
 ' set your minimums here
 minscore 			= 0					' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
 mindec 				= -10 				' what is the minimum dec you can image at
-minvmag 			= 19.5				' what is the dimmest object you can see
+minvmag 			= 20				' what is the dimmest object you can see
 minobs 				= 3					' how many observations, fewer observations mean chance of being lost
 minseen 			= 5					' what is the oldest object from the NEOCP, older objects have a good chance of being lost.
 imageScale		 	= 1.71				' your imageScale for determining exposure duration for moving objects
@@ -20,7 +17,7 @@ skySeeing 			= 2.8					' your skyseeing in arcsec, used for figuring out max exp
 imageOverhead 		= 22 				' how much time to download (and calibrate) added to exposure duration to calculate total number of exposures and repoint
 binning 			= 2 				' binning
 minHorizon 			= 30				' minimum altitude that ACP/Scheduler will start imaging
-maxuncertainty 		= 10				' maximum uncertainty in arcmin from scout for attempt 
+maxuncertainty 		= 20				' maximum uncertainty in arcmin from scout for attempt 
 getMPCORB 			= True				' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
 getCOMETS 			= False
 getNEOCP 			= True
@@ -82,7 +79,8 @@ If getNEOCP = True Then
 End If 
 
 if runType = "nightly" Then
-'call updateACPObjects()	
+	Wscript.Echo "compiling mpcorb.dat for ACP"
+	call updateACPObjects()	
 End If
 
 if objFSO.FileExists(mpcTmpFile) then												' clean up temporary files
@@ -275,26 +273,43 @@ Function getNEOCPObjects()
 		uncertainty = jsonDecoded("unc")												' position uncertainty in arcmin
 	
 		if (CSng(score) >= minscore) AND (CSng(dec) >= mindec) AND (CSng(vmag) <= minvmag) AND (CSng(obs) >= minobs) AND (CSng(seen) <= minseen) AND ((CSng(uncertainty) <= maxuncertainty) AND (uncertainty <> "")) Then
-			
-			objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(mpcLinkBase) & object & "&obs=y -O" & " " & obsTmpFile,0,True ' run wget to get observations from NEOCP
-			Set objFile = objFSO.OpenTextFile(obsTmpFile, 1)
-			objFile.ReadAll
-			if objFile.Line > 3 Then
-				objShell.CurrentDirectory = "C:\find_o64"		' lets change our cwd to run find_orb, it likes it's home
-				objShell.Run "fo.exe observations.txt",0,True									' open the mpc_fmt.txt that find_orb created and append it to the MPCORB.dat
-				objShell.CurrentDirectory = baseDir												' change directory back to where we are running script
-				Set objFile = objFSO.OpenTextFile(mpcTmpFile, 1)
-				Do Until objFile.AtEndOfStream
-					Elements = objFile.ReadLine
-					MPCorbFileToWrite.WriteLine(Elements)										'write elemets to MPCORB.dat
-				Loop
-				objFile.Close
 		
-				Wscript.Echo object & "     " & score & "  " + ra & "  " & dec & "    " & vmag & "      " & obs & "     " & seen & "   " & uncertainty
-				objectsFileToWrite.WriteLine(object)'+ "     " + score + "  " + ra + "  " + dec + "    " + vmag + "      " + obs + "     " + seen + " " + uncertainty)	' write out the objects_run for reference
-				Name = object
+			Set objectsFileToRead = objFSO.OpenTextFile(objectsSaveFile,1)
+		
+			Do Until objectsFileToRead.AtEndOfStream
+				currentObject = objectsFileToRead.ReadLine
+				if currentObject = object Then
+					objectsFileHasMatches = 1
+					Exit Do
+				Else 
+					objectsFileHasMatches = 0
+				End If
+			Loop
+		
+			objectsFileToRead.Close
+			
+			if objectsFileHasMatches = 0 Then
+				objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(mpcLinkBase) & trim(object) & "&obs=y -O" & " " & obsTmpFile,0,True ' run wget to get observations from NEOCP
 				
-				call buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
+				Set objFile = objFSO.OpenTextFile(obsTmpFile, 1)
+				objFile.ReadAll
+				if objFile.Line >= 3 Then
+					objShell.CurrentDirectory = "C:\find_o64"		' lets change our cwd to run find_orb, it likes it's home
+					objShell.Run "fo.exe observations.txt",0,True									' open the mpc_fmt.txt that find_orb created and append it to the MPCORB.dat
+					objShell.CurrentDirectory = baseDir												' change directory back to where we are running script
+					Set objFile = objFSO.OpenTextFile(mpcTmpFile, 1)
+					Do Until objFile.AtEndOfStream
+						Elements = objFile.ReadLine
+						MPCorbFileToWrite.WriteLine(Elements)										'write elemets to MPCORB.dat
+					Loop
+					objFile.Close
+		
+					Wscript.Echo object & "     " & score & "  " + ra & "  " & dec & "    " & vmag & "      " & obs & "     " & seen & "   " & uncertainty
+					objectsFileToWrite.WriteLine(object)'+ "     " + score + "  " + ra + "  " + dec + "    " + vmag + "      " + obs + "     " + seen + " " + uncertainty)	' write out the objects_run for reference
+					Name = object
+				
+					call buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
+				End If
 			End If
 		End If
 		
