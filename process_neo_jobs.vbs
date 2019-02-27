@@ -9,7 +9,7 @@ runType = Arg(0)
 ' set your minimums here
 minscore 			= 0					' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
 mindec 				= -10 				' what is the minimum dec you can image at
-minvmag 			= 20				' what is the dimmest object you can see
+minvmag 			= 19.5				' what is the dimmest object you can see
 minobs 				= 3					' how many observations, fewer observations mean chance of being lost
 minseen 			= 5					' what is the oldest object from the NEOCP, older objects have a good chance of being lost.
 imageScale		 	= 1.71				' your imageScale for determining exposure duration for moving objects
@@ -57,6 +57,11 @@ Include "VbsJson"
 Dim json, neocpStr, jsonDecoded
 Set json = New VbsJson
 
+objShell.Run "taskkill /im TheSky6.exe", , True
+'set objTheSky = CreateObject("TheSky6.RASCOMTheSky")
+'objTheSky.Quit()
+'set objTheSky = Nothing
+	
 if runType = "nightly" Then
 	if objFSO.FileExists(mpcorbSaveFile) then												' remove the old MPCORB.dat '
 		objFSO.DeleteFile mpcorbSaveFile
@@ -89,6 +94,10 @@ end if
 
 if objFSO.FileExists(baseDir+"\NEOCP.rtml") then											' clean up temporary files
 	objFSO.DeleteFile baseDir+"\NEOCP.rtml"
+end if
+
+if objFSO.FileExists(baseDir+"\plist.txt") then											' clean up temporary files
+	objFSO.DeleteFile baseDir+"\plist.txt"
 end if
 
 if objFSO.FileExists(neocpTmpFile) then
@@ -185,7 +194,6 @@ Function downloadObjects()
 		objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(fullMpcorbLink) & " -O" & " " & Quotes(baseDir) & fullMpcorbDat,0,True  	' get the full MPCORB.dat file for reference
 		Wscript.Echo "Done"
 	End If
-
 End Function
 
 Function getESAObjects()
@@ -195,29 +203,26 @@ Function getESAObjects()
 	Set objectsFileToWrite = CreateObject("Scripting.FileSystemObject").openTextFile(objectsSaveFile,8,true)  
 	Set MPCorbFileToWrite = CreateObject("Scripting.FileSystemObject").OpenTextFile(mpcorbSaveFile,8,true)  		' MPCORB.dat output to append NEOCP elements
 	
-	Do Until plistTmpFileRead.AtEndOfStream													' read the downloaded neocp.txt and parse for object parameters
-		strLine = plistTmpFileRead.ReadLine													' its probably a good idea NOT to touch the positions as they are fixed position.
+	Do Until plistTmpFileRead.AtEndOfStream																			' read the downloaded neocp.txt and parse for object parameters
+		strLine = plistTmpFileRead.ReadLine															
 		esaPriority = Mid(strLine,1,1)
 		object = replace(Mid(strLine, 5,10),chr(34), chr(32))															' temporary object designation
-		dec = Mid(strLine, 27,5)																	' declination 
-		vmag = Mid(strLine, 37,4)																	' vMag 
+		dec = Mid(strLine, 27,5)																						' declination 
+		vmag = Mid(strLine, 37,4)																						' vMag 
 		uncertainty = Mid(strLine, 42,5)
 		
-		If IsNumeric(esaPriority) Then																' this line cheats to bypass the date on the first line, doesnt cost much... I dont think
+		If IsNumeric(esaPriority) Then																					' this line cheats to bypass the date on the first line, doesnt cost much... I dont think
 			If (esaPriority <= 1) AND (Csng(dec) >= mindec) AND (Csng(vmag) <= minvmag) AND (Csng(uncertainty) <= maxuncertainty) Then
 				wscript.echo object & " " & esaPriority & " " & dec & " " & vmag & " " & uncertainty
 				Set objectsFileToRead = objFSO.OpenTextFile(objectsSaveFile,1)
 		
 				Do Until objectsFileToRead.AtEndOfStream
 					currentObject = objectsFileToRead.ReadLine
-					'Wscript.Echo "checking " & currentObject & " against " & object
 					if currentObject = object Then
 						objectsFileHasMatches = 1
-						'Wscript.Echo "Objects File Has Matches " & objectsFileHasMatches
 						Exit Do
 					Else 
 						objectsFileHasMatches = 0
-						'Wscript.Echo "No Matches " & objectsFileHasMatches
 					End If
 				Loop
 		
@@ -236,6 +241,7 @@ Function getESAObjects()
 						Do Until objFile.AtEndOfStream
 							Elements = objFile.ReadLine
 							MPCorbFileToWrite.WriteLine(Elements)										'write elemets to MPCORB.dat
+							Wscript.Sleep 10000
 							call buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 						Loop
 					objFile.Close
@@ -293,22 +299,30 @@ Function getNEOCPObjects()
 				
 				Set objFile = objFSO.OpenTextFile(obsTmpFile, 1)
 				objFile.ReadAll
+				
+				if objFSO.FileExists(mpcTmpFile) then
+					objFSO.DeleteFile mpcTmpFile
+				end if
+				
 				if objFile.Line >= 3 Then
-					objShell.CurrentDirectory = "C:\find_o64"		' lets change our cwd to run find_orb, it likes it's home
+					objShell.CurrentDirectory = "C:\find_o64"										' lets change our cwd to run find_orb, it likes it's home
+					
 					objShell.Run "fo.exe observations.txt",0,True									' open the mpc_fmt.txt that find_orb created and append it to the MPCORB.dat
-					objShell.CurrentDirectory = baseDir												' change directory back to where we are running script
-					Set objFile = objFSO.OpenTextFile(mpcTmpFile, 1)
-					Do Until objFile.AtEndOfStream
-						Elements = objFile.ReadLine
-						MPCorbFileToWrite.WriteLine(Elements)										'write elemets to MPCORB.dat
-					Loop
-					objFile.Close
+					
+					if objFSO.FileExists(mpcTmpFile) then	
+						objShell.CurrentDirectory = baseDir												' change directory back to where we are running script
+						Set objFile = objFSO.OpenTextFile(mpcTmpFile, 1)
+						Do Until objFile.AtEndOfStream
+							Elements = objFile.ReadLine
+							MPCorbFileToWrite.WriteLine(Elements)										'write elemets to MPCORB.dat
+						Loop
+						objFile.Close
 		
 					Wscript.Echo object & "     " & score & "  " + ra & "  " & dec & "    " & vmag & "      " & obs & "     " & seen & "   " & uncertainty
 					objectsFileToWrite.WriteLine(object)'+ "     " + score + "  " + ra + "  " + dec + "    " + vmag + "      " + obs + "     " + seen + " " + uncertainty)	' write out the objects_run for reference
 					Name = object
-				
 					call buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
+					End If
 				End If
 			End If
 		End If
@@ -408,8 +422,8 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 		XML = RTML.XML(True)
 		
 		Set FSO = CreateObject("Scripting.FileSystemObject")
-		Set FIL = FSO.CreateTextFile(baseDir+"\NEOCP.rtml", True)    		' **CHANGE FOR YOUR SYSTEM**
-		FIL.Write XML                                           			' Has embedded line endings
+		Set FIL = FSO.CreateTextFile(baseDir+"\NEOCP.rtml", True)    		
+		FIL.Write XML                                           			
 		FIL.Close
 		
 		Dim I, DB, R
@@ -456,7 +470,6 @@ Function getTransitFromTheSky6(object, transitJd)
     s = DoubleDMS(2)
 	hms = Cstr(lpad(h, 2, "0") & ":" & lpad(m, 2, "0") & ":" & round(s))
 	transitHM = Cstr(lpad(h, 2, "0") & ":" & lpad(m, 2, "0"))
-	
 
 	if (objectTransit < 24) AND (dateDiff("h",time(),hms) > 0) Then
 		hoursToTransit = dateDiff("h",time(),hms) 
@@ -471,7 +484,8 @@ Function getTransitFromTheSky6(object, transitJd)
 	Wscript.Echo "Transit at " & hms & " " & transitJd & " " & abs(hoursToTransit) & " hours to transit "
 	Wscript.Echo " "
 	
-	objTheSky.Quit()
+	objShell.Run "taskkill /im TheSky6.exe", , True
+	'objTheSky.Quit()
 	
 End Function
 
