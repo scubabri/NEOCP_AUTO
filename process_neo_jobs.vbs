@@ -2,20 +2,25 @@ Set objShell = CreateObject("WScript.Shell")
 
 baseDir = "E:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO"  										' set your working directory here
 
-Dim Arg, runType, Elements, minscore, mindec, minvmag, minobs, minseen, imageScale, skySeeing, imageOverhead, binning, minHorizon, uncertainty, object, score, ra, dec, vmag, obs, seen, RightAscension, Declination, dJD, transitHM
+Dim Arg, runType, Elements, minscore, mindec, minvmag, minobs, minseen, imageScale, skySeeing, imageOverhead, binning, minHorizon, uncertainty, object, score, ra, dec, vmag, obs, seen, RightAscension, Declination, dJD, objectPA
+Dim minESAPriority, transitDate
 set Arg = WScript.Arguments
 runType = Arg(0)
 
 ' set your minimums here
-minscore 			= 0					' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
-mindec 				= -10 				' what is the minimum dec you can image at
-minvmag 			= 19.5				' what is the dimmest object you can see
+minscore 			= 50				' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
+minESAPriority  	= 0					' 0 = UR, 1 = NE, 2 = LP 
+mindec 				= -10				' what is the minimum dec you can image at
+minvmag 			= 20				' what is the dimmest object you can see
 minobs 				= 3					' how many observations, fewer observations mean chance of being lost
 minseen 			= 5					' what is the oldest object from the NEOCP, older objects have a good chance of being lost.
-imageScale		 	= 1.71				' your imageScale for determining exposure duration for moving objects
-skySeeing 			= 2.8					' your skyseeing in arcsec, used for figuring out max exposure duration for moving objects.
-imageOverhead 		= 22 				' how much time to download (and calibrate) added to exposure duration to calculate total number of exposures and repoint
-binning 			= 2 				' binning
+focalLength			= 2743.2			' your focalLength
+pixelSize			= 24				' your camera pixel size in microns
+skySeeing 			= 2					' your skyseeing in arcsec, used for figuring out max exposure duration for moving objects.
+sensorHeight		= 24.6				' sensor height in mm
+sensorWidth			= 24.6				' sensory width in mm
+imageOverhead 		= 7	 				' how much time to download (and calibrate) added to exposure duration to calculate total number of exposures and repoint
+binning 			= 1 				' binning
 minHorizon 			= 30				' minimum altitude that ACP/Scheduler will start imaging
 maxuncertainty 		= 20				' maximum uncertainty in arcmin from scout for attempt 
 getMPCORB 			= True				' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
@@ -23,13 +28,17 @@ getCOMETS 			= False
 getNEOCP 			= True
 getESAPri	 		= True
 
+imageScale = round(((pixelSize * 206.3) / focalLength) * binning,2)
+fovh = round((135.3 * sensorHeight) / (focalLength * 0.0393701),2)
+fovw = round((135.3 * sensorWidth) / (focalLength * 0.0393701),2)
+
 strScriptFile = Wscript.ScriptFullName 													
 Set objFSO = CreateObject("Scripting.FileSystemObject")
 Set objFile = objFSO.GetFile(strScriptFile)
 runDir = objFSO.GetParentFolderName(objFile) 
 objShell.CurrentDirectory = baseDir        												' E:\Dropbox\ASTRO\SCRIPTS\NEOCP_AUTO
 
-esaPlistLink = "http://neo.ssa.esa.int/PSDB-portlet/plist.txt"							' link to the ESA Priority List.
+esaPlistLink = "http://neo.ssa.esa.int/PSDB-portlet/download?file=esa_priority_neo_list"							' link to the ESA Priority List.
 mpcLinkBase = "https://cgi.minorplanetcenter.net/cgi-bin/showobsorbs.cgi?Obj="			' base url to get NEOCPNomin orbit elements, shouldnt need to change this
 neocpLink = "https://minorplanetcenter.net/iau/NEO/neocp.txt" 							' minorplanetcenter URL, shouldnt need to change this
 scoutLink = "https://ssd-api.jpl.nasa.gov/scout.api?tdes="								' link to jpl scout for uncertainty determination
@@ -44,6 +53,7 @@ mpcTmpFile = "C:\find_o64\mpc_fmt.txt"													' this is the output from fin
 obsTmpFile = "C:\find_o64\observations.txt"												' this is from observations from the NEOCP after parsing and filtering NEOCP.txt
 
 mpcorbSaveFile = baseDir+"\MPCORB.dat"													' the raw MPCORB.dat from MPC that we'll append our elements to.
+mpcorbShortFile = baseDir+"\MPCORB-Short.dat"
 												
 fullMpcorbSave = "C:\Program Files (x86)\Common Files\ASCOM\MPCORB\MPCORB.dat"			' this is a copy for ACP should we decide to manually do an object run. 
 fullMpcorbLink = "https://minorplanetcenter.net/iau/MPCORB/MPCORB.DAT"	
@@ -57,14 +67,15 @@ Include "VbsJson"
 Dim json, neocpStr, jsonDecoded
 Set json = New VbsJson
 
-objShell.Run "taskkill /im TheSky6.exe", , True
-'set objTheSky = CreateObject("TheSky6.RASCOMTheSky")
-'objTheSky.Quit()
-'set objTheSky = Nothing
-	
 if runType = "nightly" Then
 	if objFSO.FileExists(mpcorbSaveFile) then												' remove the old MPCORB.dat '
 		objFSO.DeleteFile mpcorbSaveFile
+	end if
+	
+	if objFSO.FileExists(mpcorbShortFile) then												' remove the old MPCORB.dat '
+		today = DateAdd("d",-1,date())
+		mpcorbShortArchFile = "E:\Dropbox\ASTRO\ACP\neocp\MPCORB_ARCHIVE\MPCORB-" & year(today) & lpad(month(today),2,"0") & lpad(day(today),2,"0") & ".dat"
+		objFSO.MoveFile mpcorbShortFile, mpcorbShortArchFile
 	end if
 	
 	if objFSO.FileExists(objectsSaveFile) then												' remove the old object_run.txt 
@@ -73,20 +84,15 @@ if runType = "nightly" Then
 	
 	call clearACPSched()
 	call downloadObjects()
-End If
-
-If getESAPri = True Then
-	call getESAObjects()
+	call updateACPObjects()	
+	If getESAPri = True Then
+		call getESAObjects()
+	End If
 End If
 
 If getNEOCP = True Then
 	call getNEOCPObjects()
 End If 
-
-if runType = "nightly" Then
-	Wscript.Echo "compiling mpcorb.dat for ACP"
-	call updateACPObjects()	
-End If
 
 if objFSO.FileExists(mpcTmpFile) then												' clean up temporary files
 	objFSO.DeleteFile mpcTmpFile
@@ -103,11 +109,25 @@ end if
 if objFSO.FileExists(neocpTmpFile) then
 	objFSO.DeleteFile neocpTmpFile
 end if
+
 if objFSO.FileExists(baseDir+scoutTmpFile) then
+	Wscript.Sleep 5000
 	objFSO.DeleteFile baseDir+scoutTmpFile
 end if
+
+If runType = "nightly" Then
+	Set objectsFileToRead = objFSO.OpenTextFile(objectsSaveFile,1)
+	body = ""
+	Do Until objectsFileToRead.atEndOfStream
+        body = body & objectsFileToRead.readLine & vbCrLf
+	Loop
+	Call sendMail(body)
+End If 
+
 Set objFSO = Nothing
 Set objectsFileToWrite = Nothing
+
+' Begin functions 
 
 Function clearACPSched()
 	Set Sched = CreateObject("Acp.Util") 
@@ -190,6 +210,7 @@ Function downloadObjects()
 	End If
 
 	if getMPCORB = true Then
+		
 		Wscript.Echo "Downloading MPCORB.dat...."
 		objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(fullMpcorbLink) & " -O" & " " & Quotes(baseDir) & fullMpcorbDat,0,True  	' get the full MPCORB.dat file for reference
 		Wscript.Echo "Done"
@@ -197,12 +218,12 @@ Function downloadObjects()
 End Function
 
 Function getESAObjects()
-	objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(esaPlistLink) & " -N",0,True								'download ESA Priority List	
+	objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(esaPlistLink) & " -N -O" & Quotes(baseDir) & "/plist.txt",0,True								'download ESA Priority List	
 	score = "20"
 	set plistTmpFileRead = objFSO.OpenTextFile(plistTmpFile, 1) 
 	Set objectsFileToWrite = CreateObject("Scripting.FileSystemObject").openTextFile(objectsSaveFile,8,true)  
 	Set MPCorbFileToWrite = CreateObject("Scripting.FileSystemObject").OpenTextFile(mpcorbSaveFile,8,true)  		' MPCORB.dat output to append NEOCP elements
-	
+	Set MPCorbShortFileToWrite = CreateObject("Scripting.FileSystemObject").OpenTextFile(mpcorbShortFile,8,true)
 	Do Until plistTmpFileRead.AtEndOfStream																			' read the downloaded neocp.txt and parse for object parameters
 		strLine = plistTmpFileRead.ReadLine															
 		esaPriority = Mid(strLine,1,1)
@@ -212,7 +233,7 @@ Function getESAObjects()
 		uncertainty = Mid(strLine, 42,5)
 		
 		If IsNumeric(esaPriority) Then																					' this line cheats to bypass the date on the first line, doesnt cost much... I dont think
-			If (esaPriority <= 1) AND (Csng(dec) >= mindec) AND (Csng(vmag) <= minvmag) AND (Csng(uncertainty) <= maxuncertainty) Then
+			If (Csng(esaPriority) <= minESAPriority) AND (Csng(dec) >= mindec) AND (Csng(vmag) <= minvmag) AND (Csng(uncertainty) <= maxuncertainty) Then
 				wscript.echo object & " " & esaPriority & " " & dec & " " & vmag & " " & uncertainty
 				Set objectsFileToRead = objFSO.OpenTextFile(objectsSaveFile,1)
 		
@@ -241,6 +262,8 @@ Function getESAObjects()
 						Do Until objFile.AtEndOfStream
 							Elements = objFile.ReadLine
 							MPCorbFileToWrite.WriteLine(Elements)										'write elemets to MPCORB.dat
+							MPCorbShortFileToWrite.WriteLine(Elements)
+							
 							Wscript.Sleep 10000
 							call buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 						Loop
@@ -262,6 +285,11 @@ Function getNEOCPObjects()
 	else
 		Set MPCorbFileToWrite = CreateObject("Scripting.FileSystemObject").CreateTextFile(mpcorbSaveFile,8,true)  		' MPCORB.dat didnt exist for some reason, lets create and empty one
 	End If
+	if objFSO.FileExists(mpcorbShortFile) then
+		Set MPCorbShortFileToWrite = objFSO.OpenTextFile(mpcorbShortFile,8,0)
+	else
+		Set MPCorbShortFileToWrite = objFSO.CreateTextFile(mpcorbShortFile,8,0)  		' MPCORB.dat didnt exist for some reason, lets create and empty one
+	End If
 	
 	Do Until neocpTmpFileRead.AtEndOfStream													' read the downloaded neocp.txt and parse for object parameters
 		strLine = neocpTmpFileRead.ReadLine													' its probably a good idea NOT to touch the positions as they are fixed position.
@@ -276,7 +304,7 @@ Function getNEOCPObjects()
 		objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(scoutLink) & object & " -O" & " " & Quotes(baseDir) & scoutTmpFile,0,True ' Get NEOCP from Scout
 		scoutStr = objFSO.OpenTextFile(baseDir+scoutTmpFile).ReadAll
 		Set jsonDecoded = json.Decode(scoutStr)
-		uncertainty = jsonDecoded("unc")												' position uncertainty in arcmin
+		uncertainty = jsonDecoded("unc")													' position uncertainty in arcmin
 	
 		if (CSng(score) >= minscore) AND (CSng(dec) >= mindec) AND (CSng(vmag) <= minvmag) AND (CSng(obs) >= minobs) AND (CSng(seen) <= minseen) AND ((CSng(uncertainty) <= maxuncertainty) AND (uncertainty <> "")) Then
 		
@@ -310,11 +338,14 @@ Function getNEOCPObjects()
 					objShell.Run "fo.exe observations.txt",0,True									' open the mpc_fmt.txt that find_orb created and append it to the MPCORB.dat
 					
 					if objFSO.FileExists(mpcTmpFile) then	
-						objShell.CurrentDirectory = baseDir												' change directory back to where we are running script
+						objShell.CurrentDirectory = baseDir											' change directory back to where we are running script
 						Set objFile = objFSO.OpenTextFile(mpcTmpFile, 1)
 						Do Until objFile.AtEndOfStream
 							Elements = objFile.ReadLine
+							
+							MPCorbShortFileToWrite.WriteLine(Elements)
 							MPCorbFileToWrite.WriteLine(Elements)										'write elemets to MPCORB.dat
+							Wscript.Echo Elements
 						Loop
 						objFile.Close
 		
@@ -330,14 +361,14 @@ Function getNEOCPObjects()
 	Loop
 	
 	neocpTmpFileRead.Close																			' close any open files
-	'objectsFileToWrite.Close
+	objectsFileToWrite.Close
 	MPCorbFileToWrite.Close
+	MPCorbShortFileToWrite.Close
 End Function
 
 Sub GetExposureData(expTime,imageCount, objectRate, Minutes)
 	
-	call getTransitFromTheSky6(object, transitJd)
-	call getRateFromFO(object, transitJd, objectRate)
+	call getRateFromFO(object, objectRate, objectPA)
 	expTime = round((60*(imageScale/objectRate)*skySeeing),0)
 	Minutes = round(18/(objectRate/60))
 	
@@ -359,6 +390,8 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 	
 	If imageCount > 0 Then															' to overcome issues when object has been moved to PCCP
 	
+		set Util = CreateObject("ACP.Util")
+		set AUtil = CreateObject("ASCOM.Utilities.Util")
 		Dim RTML, REQ, TGT, ImageSet, COR, FSO, FIL, TR                 
 		Set RTML = CreateObject("DC3.RTML23.RTML")
 		Set RTML.Contact = CreateObject("DC3.RTML23.Contact")
@@ -383,25 +416,26 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 		REQ.Correction.dark = False
 		
 		RTML.RequestsC.Add REQ
-		REQ.ID = object                                         					' This becomes the Plan name for the Request
-		REQ.Description = object + "Transit at " + transitHM + " UTC Score: " + score + " RA: " + Cstr(round(RightAscension,2)) + " DEC: " + Cstr(round(Declination,2)) + " vMag: " + vmag + " #Obs: " + obs + " Last Seen: " + seen  + " Rate: " + CStr(objectRate) + " arcsec/min" + " Unc (arcmin): " + uncertainty
+		REQ.ID = object        		' This becomes the Plan name for the Request
+		REQ.Description = object + " Score: " + score + " " + transitDate + "UT vMag: " + vmag + " #Obs: " + obs + " Last Seen: " + seen  + " Rate: " + CStr(objectRate) + " arcsec/min @" + CStr(objectPA) + " Deg"  + " Unc: " + trim(uncertainty) + " arcsec"
 		
 		Set TGT = CreateObject("DC3.RTML23.Target")
 		TGT.TargetType.OrbitalElements = Elements
 		TGT.Description = Elements
 		TGT.Name = object
 			
-		imageTotalTime = round(((expTime + imageOverhead) * imageCount) / 60)			' in minutes including overhead for download, etc
+		'imageTotalTime = round(((expTime + imageOverhead) * imageCount) / 60)			' in minutes including overhead for download, etc
 		
-		TGT.count = 1
-		TGT.Interval = 0
-		REQ.TargetsC.Add TGT
-		
-		'TGT.count = 1
-		'TGT.Timefromprev = round((Minutes + 60) / 60) 
-		'TGT.Timefromprev = round((imageTotalTime + 16) / 60,2)
-		'TGT.Tolfromprev = round((imageTotalTime) / 60,2)
-		'REQ.TargetsC.Add TGT
+		If objectRate > 30 Then
+			TGT.count = 10002
+			TGT.Interval = 0
+			imageCount = imageCount / 2
+			REQ.TargetsC.Add TGT
+		Else
+			TGT.count = 1
+			TGT.Interval = 0
+			REQ.TargetsC.Add TGT
+		End If
 		
 		'TGT.count = 1
 		'TGT.Timefromprev = round((Minutes + 60) / 60)
@@ -410,10 +444,10 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 		'REQ.TargetsC.Add TGT
 		
 		Set ImageSet = CreateObject("DC3.RTML23.Picture")
-		ImageSet.Name = object+" Luminance"                               	
+		ImageSet.Name = object+" Clear"                               	
 		ImageSet.ExposureSpec.ExposureTime = expTime
 		ImageSet.Binning = binning
-		ImageSet.Filter = "Luminance"
+		ImageSet.Filter = "Clear"
 		ImageSet.Description = "#nopreview"	
 		ImageSet.Count = imageCount
 			
@@ -449,87 +483,42 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 		
 	End If
 End Function
-
-Function getTransitFromTheSky6(object, transitJd)
-
-	set Utils = CreateObject("TheSky6.Utils")
-	set objTheSky = CreateObject("TheSky6.RASCOMTheSky")
-	Set objTheSkyChart = CreateObject("TheSky6.StarChart") 
-	Set objTheSkyInfo = CreateObject("TheSky6.ObjectInformation") 
 	
-	targetName = "MPL " & object
+Function getRateFromFO(object, objectRate, objectPA)
 	
-	call objTheSkyChart.Find (targetName)
-	
-	objTheSkyInfo.Index = 0 
-	objectTransit = objTheSkyInfo.Property(68)
-	
-	doubleDMS = Utils.ConvertAngleToDMS(objectTransit)
-	h = DoubleDMS(0)
-	m = DoubleDMS(1)
-    s = DoubleDMS(2)
-	hms = Cstr(lpad(h, 2, "0") & ":" & lpad(m, 2, "0") & ":" & round(s))
-	transitHM = Cstr(lpad(h, 2, "0") & ":" & lpad(m, 2, "0"))
-
-	if (objectTransit < 24) AND (dateDiff("h",time(),hms) > 0) Then
-		hoursToTransit = dateDiff("h",time(),hms) 
-	Else 
-		hoursToTransit = abs(24 - dateDiff("h",hms,time()))
-	End If
-	
-	JD = Utils.ComputeJulianDate
-	transitJd = (JD + (abs(hoursToTransit/24)))
-	dJD = transitJd
-	
-	Wscript.Echo "Transit at " & hms & " " & transitJd & " " & abs(hoursToTransit) & " hours to transit "
-	Wscript.Echo " "
-	
-	objShell.Run "taskkill /im TheSky6.exe", , True
-	'objTheSky.Quit()
-	
-End Function
-
-Function getRateFromFO(object, transitJd, objectRate)
-
-	ephemStr = "EPHEM_START"
-	ephemStrNew = "EPHEM_START=" & transitJd
-	environFile = "C:\find_o64\environ.dat"
-	environTemp = "C:\find_o64\environ.tmp"
-	environBase = "C:\find_o64\environ-base.dat"
 	ephemerisFile = "C:\find_o64\ephemeris.txt"
-
-	Set environFSO = CreateObject("Scripting.FileSystemObject")
-	Set environObjTemp = objFSO.OpenTextFile(environTemp, 2, True)
-	Set environObjFile = objFSO.OpenTextFile(environFile)
-	
-	Do Until environObjFile.AtEndOfStream
-		current = environObjFile.ReadLine
-		If InStr(current, ephemStr) > 0 Then
-            environObjTemp.WriteLine ephemStrNew
-        Else
-            environObjTemp.WriteLine current
-        End If
-	Loop
-	
-	environObjFile.Close
-	environObjTemp.Close	
-
-	objFSO.CopyFile environTemp, environFile, True
 	
 	objShell.CurrentDirectory = "C:\find_o64"			
 	objShell.Run "fo.exe observations.txt -e ephemeris.txt -C V01",0,True	
-	objShell.CurrentDirectory = baseDir
+	objShell.CurrentDirectory = basedir
 	
 	Set ephemerisObjFile = objFSO.OpenTextFile(ephemerisFile)
+	
 	Do Until ephemerisObjFile.AtEndOfStream	
-		current = ephemerisObjFile.ReadLine
-	    if InStr(current, "#") = 0 Then											
-			objectRate = CDbl(Mid(current, 76,6))
+	
+		line_current = ephemerisObjFile.ReadLine
+		
+	    if IsNumeric(Mid(line_current,87,3)) Then
+			If (Mid(line_current,87,3)) > 0 Then
+					
+				alt = Mid(line_current,87,3)
+				'Wscript.Echo line_current & " " & Len(alt)
+				
+				If alt < alt_prev Or Len(alt) = 0 Then						
+					exit Do
+				Else 
+					alt_prev = alt
+					line_prev = line_current
+				End If
+			End If
 		End If 
 	Loop	
-	
-	objFSO.CopyFile environBase, environFile, True
-		
+	objectRate = Mid(line_prev, 74,6)
+	objectPA = Mid(line_prev,80,5)
+	transitDate = FormatDateTime(CDate(mid(line_prev, 1,17)),4)
+	'WScript.Echo(line_prev)
+	Wscript.Echo object & " " & objectRate & " " & transitDate & " " & alt & " " & alt_prev
+	Wscript.Echo " "
 End Function
 
 Function updateACPObjects()
@@ -538,6 +527,7 @@ Function updateACPObjects()
 		mpccopy.CopyFile baseDir+fullMpcorbDat, fullMpcorbSave, True
 
 		objShell.CurrentDirectory = "C:\Program Files (x86)\Common Files\ASCOM\MPCORB"
+		Wscript.Echo "compiling mpcorb.dat for ACP"
 		objShell.Run "MakeDB.wsf",0,True
 
 		set mpccopy = nothing
@@ -554,6 +544,26 @@ Function updateACPObjects()
 		set mpccopy = nothing
 		objShell.CurrentDirectory = baseDir
 	End If
+End Function
+
+Function sendMail(body)
+
+	Set MyEmail=CreateObject("CDO.Message")
+
+	MyEmail.Subject="NEO Object list for " & Date
+	MyEmail.From="brians@fl240.com"
+	MyEmail.To="brians@fl240.com"
+	MyEmail.TextBody=body
+	MyEmail.Configuration.Fields.Item ("http://schemas.microsoft.com/cdo/configuration/sendusing")=2
+
+	'SMTP Server  
+	MyEmail.Configuration.Fields.Item ("http://schemas.microsoft.com/cdo/configuration/smtpserver")="172.17.18.25"
+	'SMTP Port
+	MyEmail.Configuration.Fields.Item ("http://schemas.microsoft.com/cdo/configuration/smtpserverport")=25 
+
+	MyEmail.Configuration.Fields.Update
+	MyEmail.Send
+
 End Function
 
 Function Include(file)
