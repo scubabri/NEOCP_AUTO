@@ -66,7 +66,7 @@ fullCometDat = "\CometEls.txt"															' I cant remember why I have this o
 Include "VbsJson"	
 Dim json, neocpStr, jsonDecoded
 Set json = New VbsJson
-
+	
 if runType = "nightly" Then
 	if objFSO.FileExists(mpcorbSaveFile) then												' remove the old MPCORB.dat '
 		objFSO.DeleteFile mpcorbSaveFile
@@ -88,40 +88,72 @@ if runType = "nightly" Then
 	If getESAPri = True Then
 		call getESAObjects()
 	End If
-End If
 
-If getNEOCP = True Then
-	call getNEOCPObjects()
-End If 
 
-if objFSO.FileExists(mpcTmpFile) then												' clean up temporary files
-	objFSO.DeleteFile mpcTmpFile
-end if
+	If getNEOCP = True Then
+		call getNEOCPObjects()
+	End If 
 
-if objFSO.FileExists(baseDir+"\NEOCP.rtml") then											' clean up temporary files
-	objFSO.DeleteFile baseDir+"\NEOCP.rtml"
-end if
+	if objFSO.FileExists(mpcTmpFile) then												' clean up temporary files
+		objFSO.DeleteFile mpcTmpFile
+	end if
 
-if objFSO.FileExists(baseDir+"\plist.txt") then											' clean up temporary files
-	objFSO.DeleteFile baseDir+"\plist.txt"
-end if
+	if objFSO.FileExists(baseDir+"\NEOCP.rtml") then											' clean up temporary files
+		objFSO.DeleteFile baseDir+"\NEOCP.rtml"
+	end if
 
-if objFSO.FileExists(neocpTmpFile) then
-	objFSO.DeleteFile neocpTmpFile
-end if
+	if objFSO.FileExists(baseDir+"\plist.txt") then											' clean up temporary files
+		objFSO.DeleteFile baseDir+"\plist.txt"
+	end if
 
-if objFSO.FileExists(baseDir+scoutTmpFile) then
-	Wscript.Sleep 5000
-	objFSO.DeleteFile baseDir+scoutTmpFile
-end if
+	if objFSO.FileExists(neocpTmpFile) then
+		objFSO.DeleteFile neocpTmpFile
+	end if
 
-If runType = "nightly" Then
+	if objFSO.FileExists(baseDir+scoutTmpFile) then
+		Wscript.Sleep 5000
+		objFSO.DeleteFile baseDir+scoutTmpFile
+	end if
+
 	Set objectsFileToRead = objFSO.OpenTextFile(objectsSaveFile,1)
 	body = ""
 	Do Until objectsFileToRead.atEndOfStream
         body = body & objectsFileToRead.readLine & vbCrLf
 	Loop
 	Call sendMail(body)
+End If 
+
+if runType = "hourly" Then
+	If getNEOCP = True Then
+		call getNEOCPObjects()
+	End If 
+
+	if objFSO.FileExists(mpcTmpFile) then												' clean up temporary files
+		objFSO.DeleteFile mpcTmpFile
+	end if
+
+	if objFSO.FileExists(baseDir+"\NEOCP.rtml") then											' clean up temporary files
+		objFSO.DeleteFile baseDir+"\NEOCP.rtml"
+	end if
+
+	if objFSO.FileExists(baseDir+"\plist.txt") then											' clean up temporary files
+		objFSO.DeleteFile baseDir+"\plist.txt"
+	end if
+
+	if objFSO.FileExists(neocpTmpFile) then
+		objFSO.DeleteFile neocpTmpFile
+	end if
+
+	if objFSO.FileExists(baseDir+scoutTmpFile) then
+		Wscript.Sleep 5000
+		objFSO.DeleteFile baseDir+scoutTmpFile
+	end if
+End If
+
+if Arg.Count > 0 AND (runType <> "nightly" AND runType <> "hourly") Then
+
+getCLIObjects()
+
 End If 
 
 Set objFSO = Nothing
@@ -216,6 +248,52 @@ Function downloadObjects()
 		Wscript.Echo "Done"
 	End If
 End Function
+
+Function getCLIObjects()
+	
+	Set objectsFileToWrite = CreateObject("Scripting.FileSystemObject").openTextFile(objectsSaveFile,8,true)  
+	Set MPCorbFileToWrite = CreateObject("Scripting.FileSystemObject").OpenTextFile(mpcorbSaveFile,8,true)  		' MPCORB.dat output to append NEOCP elements
+	Set MPCorbShortFileToWrite = CreateObject("Scripting.FileSystemObject").OpenTextFile(mpcorbShortFile,8,true)										
+	object = runType															' temporary object designation
+		
+	wscript.echo object
+	Set objectsFileToRead = objFSO.OpenTextFile(objectsSaveFile,1)
+		
+	Do Until objectsFileToRead.AtEndOfStream
+		currentObject = objectsFileToRead.ReadLine
+		if currentObject = object Then
+			objectsFileHasMatches = 1
+		Exit Do
+		Else 
+			objectsFileHasMatches = 0
+		End If
+	Loop
+		
+	objectsFileToRead.Close
+			
+	if objectsFileHasMatches = 0 Then	
+		objectsFileToWrite.WriteLine(object)
+		objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(newtonLinkBase) & Replace(object," ","")  & ".rwo" & " -O" & " " & obsTmpFile,0,True 
+		Set objFile = objFSO.OpenTextFile(obsTmpFile, 1)
+			
+		If (objFile.AtEndOfStream <> True) Then
+			objShell.CurrentDirectory = "C:\find_o64"										' lets change our cwd to run find_orb, it likes it's home
+			objShell.Run "fo.exe observations.txt",0,True									' open the mpc_fmt.txt that find_orb created and append it to the MPCORB.dat
+			objShell.CurrentDirectory = baseDir
+			Set objFile = objFSO.OpenTextFile(mpcTmpFile, 1)
+			Do Until objFile.AtEndOfStream
+				Elements = objFile.ReadLine
+				MPCorbFileToWrite.WriteLine(Elements)										'write elemets to MPCORB.dat
+				MPCorbShortFileToWrite.WriteLine(Elements)
+							
+				Wscript.Sleep 10000
+				call buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
+			Loop
+			objFile.Close
+		End If
+	End If
+End Function
+	
 
 Function getESAObjects()
 	objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(esaPlistLink) & " -N -O" & Quotes(baseDir) & "/plist.txt",0,True								'download ESA Priority List	
