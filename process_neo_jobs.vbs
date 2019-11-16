@@ -8,22 +8,22 @@ set Arg = WScript.Arguments
 runType = Arg(0)
 
 ' set your minimums here
-minscore 			= 50				' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
+minscore 			= 80				' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
 minESAPriority  	= 0					' 0 = UR, 1 = NE, 2 = LP 
 mindec 				= -10				' what is the minimum dec you can image at
-minvmag 			= 20				' what is the dimmest object you can see
+minvmag 			= 20.0				' what is the dimmest object you can see
 minobs 				= 3					' how many observations, fewer observations mean chance of being lost
-minseen 			= 5					' what is the oldest object from the NEOCP, older objects have a good chance of being lost.
-focalLength			= 2743.2			' your focalLength
+minseen 			= 1					' what is the oldest object from the NEOCP, older objects have a good chance of being lost.
+focalLength			= 4161				' your focalLength
 pixelSize			= 24				' your camera pixel size in microns
-skySeeing 			= 2					' your skyseeing in arcsec, used for figuring out max exposure duration for moving objects.
+skySeeing 			= 3					' your skyseeing in arcsec, used for figuring out max exposure duration for moving objects.
 sensorHeight		= 24.6				' sensor height in mm
 sensorWidth			= 24.6				' sensory width in mm
 imageOverhead 		= 7	 				' how much time to download (and calibrate) added to exposure duration to calculate total number of exposures and repoint
 binning 			= 1 				' binning
-minHorizon 			= 30				' minimum altitude that ACP/Scheduler will start imaging
+minHorizon 			= 25				' minimum altitude that ACP/Scheduler will start imaging
 maxuncertainty 		= 20				' maximum uncertainty in arcmin from scout for attempt 
-getMPCORB 			= True				' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
+getMPCORB 			= False				' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
 getCOMETS 			= False
 getNEOCP 			= True
 getESAPri	 		= True
@@ -250,6 +250,8 @@ Function downloadObjects()
 End Function
 
 Function getCLIObjects()
+	objShell.Run Quotes(runDir & "\wget.exe") & " " & Quotes(neocpLink) & " -N",0,True 									'download current neocp.txt from MPC 
+	Set neocpTmpFileRead = objFSO.OpenTextFile(neocpTmpFile, 1) 					
 	
 	Set objectsFileToWrite = CreateObject("Scripting.FileSystemObject").openTextFile(objectsSaveFile,8,true)  
 	Set MPCorbFileToWrite = CreateObject("Scripting.FileSystemObject").OpenTextFile(mpcorbSaveFile,8,true)  		' MPCORB.dat output to append NEOCP elements
@@ -339,7 +341,7 @@ Function getESAObjects()
 						Set objFile = objFSO.OpenTextFile(mpcTmpFile, 1)
 						Do Until objFile.AtEndOfStream
 							Elements = objFile.ReadLine
-							MPCorbFileToWrite.WriteLine(Elements)										'write elemets to MPCORB.dat
+							'MPCorbFileToWrite.WriteLine(Elements)										'write elemets to MPCORB.dat
 							MPCorbShortFileToWrite.WriteLine(Elements)
 							
 							Wscript.Sleep 10000
@@ -451,7 +453,7 @@ Sub GetExposureData(expTime,imageCount, objectRate, Minutes)
 	Minutes = round(18/(objectRate/60))
 	
 	'If Minutes > 18 Then
-		Minutes = 40
+		Minutes = 30
 	'End If
 	If expTime > 60 Then 
 		expTime = 60 
@@ -471,67 +473,86 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 		set Util = CreateObject("ACP.Util")
 		set AUtil = CreateObject("ASCOM.Utilities.Util")
 		Dim RTML, REQ, TGT, ImageSet, COR, FSO, FIL, TR                 
-		Set RTML = CreateObject("DC3.RTML23.RTML")
-		Set RTML.Contact = CreateObject("DC3.RTML23.Contact")
+		Set RTML = CreateObject("XML_RTML23.RTML")
+		RTML.Version = "2.3" ' Required to access all 2.3 level features!
+		Set RTML.Contact = CreateObject("XML_RTML23.Contact")
 		RTML.Contact.User = "neocp"
 		RTML.Contact.Email = "brians@fl240.com"
 		
-		Set REQ =  CreateObject("DC3.RTML23.Request")
+		Set REQ =  CreateObject("XML_RTML23.Request")
 		REQ.UserName = "neocp"                                  
 		REQ.Project = "NEOCP"                                    					' Proj for above user will be created if needed
+		REQ.Bestefforts = True
 
-		Set REQ.Schedule = CreateObject("DC3.RTML23.Schedule")
+		Set REQ.Schedule = CreateObject("XML_RTML23.Schedule")
 		REQ.Schedule.Horizon = minHorizon
 		REQ.Schedule.Priority = score
-		Set REQ.Schedule.Moon = CreateObject("DC3.RTML23.Moon")
-		Set REQ.Schedule.Moon.Lorentzian = CreateObject("DC3.RTML23.Lorentzian")
-		REQ.Schedule.Moon.Lorentzian.Distance  = 15
-		REQ.Schedule.Moon.Lorentzian.Width = 6
+		
+		Set REQ.Schedule.Moon = CreateObject("XML_RTML23.Moon")
+		REQ.Schedule.Moon.Distance = 15
+		REQ.Schedule.Moon.Width = 6
 			
-		Set REQ.Correction = CreateObject("DC3.RTML23.Correction")
+		Set REQ.Correction = CreateObject("XML_RTML23.Correction")
 		REQ.Correction.zero = False
 		REQ.Correction.flat = False
 		REQ.Correction.dark = False
 		
-		RTML.RequestsC.Add REQ
+		RTML.Requests.Add REQ
 		REQ.ID = object        		' This becomes the Plan name for the Request
 		REQ.Description = object + " Score: " + score + " " + transitDate + "UT vMag: " + vmag + " #Obs: " + obs + " Last Seen: " + seen  + " Rate: " + CStr(objectRate) + " arcsec/min @" + CStr(objectPA) + " Deg"  + " Unc: " + trim(uncertainty) + " arcsec"
 		
-		Set TGT = CreateObject("DC3.RTML23.Target")
-		TGT.TargetType.OrbitalElements = Elements
+		Set TGT = CreateObject("XML_RTML23.Target")
+		TGT.OrbitalElements = Elements
 		TGT.Description = Elements
 		TGT.Name = object
 			
 		'imageTotalTime = round(((expTime + imageOverhead) * imageCount) / 60)			' in minutes including overhead for download, etc
 		
-		If objectRate > 30 Then
-			TGT.count = 10002
+		If objectRate > 0 AND objectRate < 18 Then
+			
+			TGT.count = 1
 			TGT.Interval = 0
-			imageCount = imageCount / 2
-			REQ.TargetsC.Add TGT
+			TGT.Name = Trim(object)
+			REQ.Targets.Add TGT
+			
+			TGT.count = 1
+			TGT.Timefromprev = 1.5
+			TGT.Tolfromprev = 0.25
+			TGT.Name = Trim(object)
+			REQ.Targets.Add TGT
+			
 		Else
 			TGT.count = 1
 			TGT.Interval = 0
-			REQ.TargetsC.Add TGT
+			TGT.Name = Trim(object)
+			REQ.Targets.Add TGT
+			
+			TGT.count = 1
+			TGT.Timefromprev = 1.5
+			TGT.Tolfromprev = 0.25
+			TGT.Name = Trim(object)
+			REQ.Targets.Add TGT
+			
+			TGT.count = 1
+			TGT.Timefromprev = 1.5
+			TGT.Tolfromprev = 0.25
+			TGT.Name = Trim(object)
+			REQ.Targets.Add TGT
+			
 		End If
 		
-		'TGT.count = 1
-		'TGT.Timefromprev = round((Minutes + 60) / 60)
-		'TGT.Timefromprev = round((imageTotalTime + 16) / 60,2)
-		'TGT.Tolfromprev = round((imageTotalTime) / 60,2)
-		'REQ.TargetsC.Add TGT
+		Set PIC = CreateObject("XML_RTML23.Picture")
+		PIC.Name = Trim(object) + " Clear"                               	
+		PIC.ExposureTime = expTime
+		PIC.Binning = binning
+		PIC.Filter = "Clear"
+		PIC.Description = "#nopreview"	
+		PIC.Count = imageCount / 2
+		PIC.Dither = 3
 		
-		Set ImageSet = CreateObject("DC3.RTML23.Picture")
-		ImageSet.Name = object+" Clear"                               	
-		ImageSet.ExposureSpec.ExposureTime = expTime
-		ImageSet.Binning = binning
-		ImageSet.Filter = "Clear"
-		ImageSet.Description = "#nopreview"	
-		ImageSet.Count = imageCount
-			
-		TGT.PicturesC.Add ImageSet
+		TGT.Pictures.Add PIC
 		
-		XML = RTML.XML(True)
+		XML = RTML.XML("", True)
 		
 		Set FSO = CreateObject("Scripting.FileSystemObject")
 		Set FIL = FSO.CreateTextFile(baseDir+"\NEOCP.rtml", True)    		
@@ -557,7 +578,7 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 		Set REQ =  nothing
 		Set RTML = nothing
 		Set TGT = nothing
-		set ImageSet = Nothing
+		set PIC = Nothing
 		
 	End If
 End Function
