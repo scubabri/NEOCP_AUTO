@@ -8,13 +8,13 @@ set Arg = WScript.Arguments
 runType = Arg(0)
 
 ' set your minimums here
-minscore 			= 80				' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
+minscore 			= 0				' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
 minESAPriority  	= 0					' 0 = UR, 1 = NE, 2 = LP 
 mindec 				= -10				' what is the minimum dec you can image at
 minvmag 			= 20.0				' what is the dimmest object you can see
 minobs 				= 3					' how many observations, fewer observations mean chance of being lost
 minseen 			= 1					' what is the oldest object from the NEOCP, older objects have a good chance of being lost.
-focalLength			= 4161				' your focalLength
+focalLength			= 4055				' your focalLength
 pixelSize			= 24				' your camera pixel size in microns
 skySeeing 			= 3					' your skyseeing in arcsec, used for figuring out max exposure duration for moving objects.
 sensorHeight		= 24.6				' sensor height in mm
@@ -23,7 +23,7 @@ imageOverhead 		= 7	 				' how much time to download (and calibrate) added to ex
 binning 			= 1 				' binning
 minHorizon 			= 25				' minimum altitude that ACP/Scheduler will start imaging
 maxuncertainty 		= 20				' maximum uncertainty in arcmin from scout for attempt 
-getMPCORB 			= False				' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
+getMPCORB 			= True				' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
 getCOMETS 			= False
 getNEOCP 			= True
 getESAPri	 		= True
@@ -512,7 +512,7 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 			
 			TGT.count = 1
 			TGT.Interval = 0
-			TGT.Name = Trim(object)
+			TGT.Name = Trim(object) 
 			REQ.Targets.Add TGT
 			
 			TGT.count = 1
@@ -524,7 +524,7 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 		Else
 			TGT.count = 1
 			TGT.Interval = 0
-			TGT.Name = Trim(object)
+			TGT.Name = Trim(object) 
 			REQ.Targets.Add TGT
 			
 			TGT.count = 1
