@@ -8,7 +8,7 @@ set Arg = WScript.Arguments
 runType = Arg(0)
 
 ' set your minimums here
-minscore 			= 0				' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
+minscore 			= 80				' what is the minumum score from the NEOCP, higher score, more desirable for MPC, used for Scheduler priority as well.
 minESAPriority  	= 0					' 0 = UR, 1 = NE, 2 = LP 
 mindec 				= -10				' what is the minimum dec you can image at
 minvmag 			= 20.0				' what is the dimmest object you can see
@@ -23,10 +23,10 @@ imageOverhead 		= 7	 				' how much time to download (and calibrate) added to ex
 binning 			= 1 				' binning
 minHorizon 			= 25				' minimum altitude that ACP/Scheduler will start imaging
 maxuncertainty 		= 20				' maximum uncertainty in arcmin from scout for attempt 
-getMPCORB 			= True				' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
+getMPCORB 			= False				' do you want the full MPCORB.dat for reference, new NEOCP objects will be appended.
 getCOMETS 			= False
 getNEOCP 			= True
-getESAPri	 		= True
+getESAPri	 		= False
 
 imageScale = round(((pixelSize * 206.3) / focalLength) * binning,2)
 fovh = round((135.3 * sensorHeight) / (focalLength * 0.0393701),2)
@@ -72,11 +72,11 @@ if runType = "nightly" Then
 		objFSO.DeleteFile mpcorbSaveFile
 	end if
 	
-	if objFSO.FileExists(mpcorbShortFile) then												' remove the old MPCORB.dat '
-		today = DateAdd("d",-1,date())
-		mpcorbShortArchFile = "E:\Dropbox\ASTRO\ACP\neocp\MPCORB_ARCHIVE\MPCORB-" & year(today) & lpad(month(today),2,"0") & lpad(day(today),2,"0") & ".dat"
-		objFSO.MoveFile mpcorbShortFile, mpcorbShortArchFile
-	end if
+	'if objFSO.FileExists(mpcorbShortFile) then												' remove the old MPCORB.dat '
+	'	today = DateAdd("d",-1,date())
+	'	mpcorbShortArchFile = "E:\Dropbox\ASTRO\ACP\neocp\MPCORB_ARCHIVE\MPCORB-" & year(today) & lpad(month(today),2,"0") & lpad(day(today),2,"0") & ".dat"
+	'	objFSO.MoveFile mpcorbShortFile, mpcorbShortArchFile
+	'end if
 	
 	if objFSO.FileExists(objectsSaveFile) then												' remove the old object_run.txt 
 		objFSO.DeleteFile objectsSaveFile
@@ -192,12 +192,12 @@ Function deleteNEOProject
 		
 	Set REQ =  CreateObject("DC3.RTML23.Request")
 	REQ.UserName = "neocp"                                  
-	REQ.Project = "NEOCP"                                    					' Proj for above user will be created if needed
+	REQ.Project = "NEOCP"                                    				
 
 	Set REQ.Schedule = CreateObject("DC3.RTML23.Schedule")
 		
 	RTML.RequestsC.Add REQ
-	REQ.ID = "dummy"                                         					' This becomes the Plan name for the Request
+	REQ.ID = "dummy"                                         					
 	REQ.Description = "dummy"
 	Set TGT = CreateObject("DC3.RTML23.Target")
 	TGT.Name = "dummy"	
@@ -213,8 +213,8 @@ Function deleteNEOProject
 	XML = RTML.XML(True)
 		
 	Set FSO = CreateObject("Scripting.FileSystemObject")
-	Set FIL = FSO.CreateTextFile(baseDir+"\NEOCP.rtml", True)    		' **CHANGE FOR YOUR SYSTEM**
-	FIL.Write XML                                           			' Has embedded line endings
+	Set FIL = FSO.CreateTextFile(baseDir+"\NEOCP.rtml", True)    		
+	FIL.Write XML                                           			
 	FIL.Close
 	
 	Dim I, DB, R
@@ -470,8 +470,6 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 	
 	If imageCount > 0 Then															' to overcome issues when object has been moved to PCCP
 	
-		set Util = CreateObject("ACP.Util")
-		set AUtil = CreateObject("ASCOM.Utilities.Util")
 		Dim RTML, REQ, TGT, ImageSet, COR, FSO, FIL, TR                 
 		Set RTML = CreateObject("XML_RTML23.RTML")
 		RTML.Version = "2.3" ' Required to access all 2.3 level features!
@@ -501,57 +499,17 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 		REQ.ID = object        		' This becomes the Plan name for the Request
 		REQ.Description = object + " Score: " + score + " " + transitDate + "UT vMag: " + vmag + " #Obs: " + obs + " Last Seen: " + seen  + " Rate: " + CStr(objectRate) + " arcsec/min @" + CStr(objectPA) + " Deg"  + " Unc: " + trim(uncertainty) + " arcsec"
 		
-		Set TGT = CreateObject("XML_RTML23.Target")
-		TGT.OrbitalElements = Elements
-		TGT.Description = Elements
-		TGT.Name = object
-			
-		'imageTotalTime = round(((expTime + imageOverhead) * imageCount) / 60)			' in minutes including overhead for download, etc
-		
 		If objectRate > 0 AND objectRate < 18 Then
 			
-			TGT.count = 1
-			TGT.Interval = 0
-			TGT.Name = Trim(object) 
-			REQ.Targets.Add TGT
-			
-			TGT.count = 1
-			TGT.Timefromprev = 1.5
-			TGT.Tolfromprev = 0.25
-			TGT.Name = Trim(object)
-			REQ.Targets.Add TGT
-			
+			 REQ.Targets.Add BuildTarget(1, object, Elements, imageCount, expTime, binning)
+             REQ.Targets.Add BuildTarget(2, object, Elements, imageCount, expTime, binning)
 		Else
-			TGT.count = 1
-			TGT.Interval = 0
-			TGT.Name = Trim(object) 
-			REQ.Targets.Add TGT
-			
-			TGT.count = 1
-			TGT.Timefromprev = 1.5
-			TGT.Tolfromprev = 0.25
-			TGT.Name = Trim(object)
-			REQ.Targets.Add TGT
-			
-			TGT.count = 1
-			TGT.Timefromprev = 1.5
-			TGT.Tolfromprev = 0.25
-			TGT.Name = Trim(object)
-			REQ.Targets.Add TGT
-			
+		     REQ.Targets.Add BuildTarget(1, object, Elements, imageCount, expTime, binning)
+             REQ.Targets.Add BuildTarget(2, object, Elements, imageCount, expTime, binning)	
+			 REQ.Targets.Add BuildTarget(3, object, Elements, imageCount, expTime, binning)
 		End If
 		
-		Set PIC = CreateObject("XML_RTML23.Picture")
-		PIC.Name = Trim(object) + " Clear"                               	
-		PIC.ExposureTime = expTime
-		PIC.Binning = binning
-		PIC.Filter = "Clear"
-		PIC.Description = "#nopreview"	
-		PIC.Count = imageCount / 2
-		PIC.Dither = 3
-		
-		TGT.Pictures.Add PIC
-		
+
 		XML = RTML.XML("", True)
 		
 		Set FSO = CreateObject("Scripting.FileSystemObject")
@@ -582,7 +540,37 @@ Function buildObjectDB(object, vmag,  seen, obs, uncertainty, Minutes)
 		
 	End If
 End Function
-	
+
+Function BuildTarget(idx, obj, els, cnt, expo, bin)
+    
+	Dim TGT
+         
+    Set TGT = CreateObject("XML_RTML23.Target")
+    TGT.OrbitalElements = Elements
+    TGT.Description = Elements
+    TGT.Name = trim(object)
+    TGT.count = 1
+    TGT.Interval = 0
+    TGT.Name = Trim(obj) & "-" & idx
+    If idx > 1 Then
+        TGT.Timefromprev = 1.5
+        TGT.Tolfromprev = 0.25
+    Else
+        TGT.Interval = 0
+    End If
+    Set PIC = CreateObject("XML_RTML23.Picture")
+    PIC.Name = Trim(object) + " Clear"                                   
+    PIC.ExposureTime = expo
+    PIC.Binning = bin
+    PIC.Filter = "Clear"
+    PIC.Description = "#nopreview"    
+    PIC.Count = cnt / 2
+    PIC.Dither = 3
+
+    TGT.Pictures.Add PIC        ' Hook  the Pictures onto it
+    set BuildTarget = TGT           ' Return entire constructed Target
+
+End Function
 Function getRateFromFO(object, objectRate, objectPA)
 	
 	ephemerisFile = "C:\find_o64\ephemeris.txt"
@@ -691,3 +679,4 @@ End Function
 Function Quotes(strQuotes)																' Add Quotes to string
 	Quotes = chr(34) & strQuotes & chr(34)												' http://stackoverflow.com/questions/2942554/vbscript-adding-quotes-to-a-string
 End Function
+
